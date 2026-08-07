@@ -1,0 +1,21 @@
+[project]
+name = "gradmarket"
+version = "0.1.0"
+description = "Daily tracking of UK early-careers job postings"
+requires-python = ">=3.11"
+dependencies = [
+    "requests>=2.32",
+    "psycopg[binary]>=3.2",
+    "python-dotenv>=1.0",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "ruff>=0.6"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
