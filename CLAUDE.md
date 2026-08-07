@@ -30,10 +30,9 @@ Postings are observed over time, not stored once:
 - `posting_versions` appends a row only when the content hash changes.
 
 ## Gotchas
-- A 200 response with an empty jobs array does NOT mean all jobs closed. It
-  usually means the company switched ATS provider. Treating it as closure
-  corrupts history for every posting they had. Handle empty-but-200 distinctly.
+- A 200 response with an empty jobs array does NOT mean all jobs closed. It usually means the company switched ATS provider. Treating it as closure corrupts history for every posting they had. Handle empty-but-200 distinctly.
 - Greenhouse returns descriptions as HTML. Strip before embedding.
+- A company migrating between ATS providers appears as two identities, since identity includes `source`. The same job will look closed on the old board and newly-posted on the new one, producing a false close and a false first_seen_at. Not handled yet — needs a merge rule once we have a second source.
 
 ## Constraints
 - Job description text is the companies' copyright. Store privately, never
@@ -46,3 +45,4 @@ Postings are observed over time, not stored once:
 ## Conventions
 - Type hints everywhere. Prefer boring, stable libraries.
 - Tests use recorded fixtures, never live HTTP calls.
+- Sources must be interchangeable. Each module in `sources/` exposes the same interface and returns a normalised shape. `ingest.py` must contain no provider-specific logic.
