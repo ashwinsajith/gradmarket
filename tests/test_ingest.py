@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from types import SimpleNamespace
+
+import pytest
 
 from gradmarket import db, ingest
 from gradmarket.sources.base import FetchResult
@@ -16,7 +19,7 @@ FAKE_RESULTS = {
 
 
 def test_main_writes_a_row_per_company_and_summarizes(monkeypatch, capsys):
-    monkeypatch.setattr(ingest, "COMPANIES_FILE", FIXTURES / "companies_test.yaml")
+    monkeypatch.setenv("COMPANIES_FILE", str(FIXTURES / "companies_test.yaml"))
     monkeypatch.setattr(ingest, "SOURCES", {"greenhouse": SimpleNamespace(fetch=FAKE_RESULTS.__getitem__)})
     monkeypatch.setattr(ingest.time, "sleep", lambda s: None)
 
@@ -53,3 +56,30 @@ def test_main_writes_a_row_per_company_and_summarizes(monkeypatch, capsys):
     assert "succeeded: 1" in out
     assert "failed:    2" in out
     assert "total jobs seen: 2" in out
+
+
+def test_resolve_companies_file_uses_env_var_when_set(monkeypatch):
+    target = FIXTURES / "companies_test.yaml"
+    monkeypatch.setenv("COMPANIES_FILE", str(target))
+
+    resolved = ingest.resolve_companies_file()
+
+    assert resolved == target.resolve()
+
+
+def test_resolve_companies_file_defaults_to_cwd(monkeypatch, tmp_path):
+    monkeypatch.delenv("COMPANIES_FILE", raising=False)
+    (tmp_path / "companies.yaml").write_text("greenhouse:\n  - foo\n")
+    monkeypatch.chdir(tmp_path)
+
+    resolved = ingest.resolve_companies_file()
+
+    assert resolved == (tmp_path / "companies.yaml").resolve()
+
+
+def test_resolve_companies_file_missing_raises_with_resolved_path(monkeypatch, tmp_path):
+    missing = tmp_path / "nope.yaml"
+    monkeypatch.setenv("COMPANIES_FILE", str(missing))
+
+    with pytest.raises(FileNotFoundError, match=re.escape(str(missing.resolve()))):
+        ingest.resolve_companies_file()

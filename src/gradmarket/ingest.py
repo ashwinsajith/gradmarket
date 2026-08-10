@@ -6,6 +6,7 @@ Contains no provider-specific logic; dispatches through gradmarket.sources.SOURC
 
 from __future__ import annotations
 
+import os
 import time
 from pathlib import Path
 
@@ -14,8 +15,16 @@ import yaml
 from gradmarket import db
 from gradmarket.sources import SOURCES
 
-COMPANIES_FILE = Path(__file__).resolve().parent.parent.parent / "companies.yaml"
 INTER_REQUEST_SLEEP = 1
+
+
+def resolve_companies_file() -> Path:
+    env_value = os.environ.get("COMPANIES_FILE")
+    path = Path(env_value) if env_value else Path.cwd() / "companies.yaml"
+    path = path.resolve()
+    if not path.is_file():
+        raise FileNotFoundError(f"companies file not found: {path}")
+    return path
 
 
 def load_companies(path: Path) -> dict[str, list[str]]:
@@ -24,7 +33,7 @@ def load_companies(path: Path) -> dict[str, list[str]]:
 
 
 def main() -> None:
-    companies = load_companies(COMPANIES_FILE)
+    companies = load_companies(resolve_companies_file())
     jobs_to_fetch = [
         (source_name, token) for source_name, tokens in companies.items() for token in tokens
     ]
