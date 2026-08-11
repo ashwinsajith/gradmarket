@@ -5,6 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import requests
 
 from gradmarket import db, ingest
 from gradmarket.sources.base import FetchResult
@@ -17,9 +18,22 @@ FAKE_RESULTS = {
     "bad_network": FetchResult(status_code=None, payload=None, job_count=0, error="connection refused"),
 }
 
+ALL_FAILED_RESULT = FetchResult(status_code=500, payload=None, job_count=0, error="boom")
+
+
+def _stub_run(monkeypatch, *, fetch, companies_file=None):
+    monkeypatch.delenv("HEALTHCHECK_URL", raising=False)
+    monkeypatch.setenv("COMPANIES_FILE", str(companies_file or FIXTURES / "companies_test.yaml"))
+    monkeypatch.setattr(ingest, "SOURCES", {"greenhouse": SimpleNamespace(fetch=fetch)})
+    monkeypatch.setattr(ingest.time, "sleep", lambda s: None)
+    monkeypatch.setattr(db, "get_connection", lambda: SimpleNamespace(close=lambda: None))
+    monkeypatch.setattr(db, "init_schema", lambda conn: None)
+    monkeypatch.setattr(db, "insert_raw_fetch", lambda conn, **kw: None)
+
 
 def test_main_writes_a_row_per_company_and_summarizes(monkeypatch, capsys):
     monkeypatch.setenv("COMPANIES_FILE", str(FIXTURES / "companies_test.yaml"))
+    monkeypatch.delenv("HEALTHCHECK_URL", raising=False)
     monkeypatch.setattr(ingest, "SOURCES", {"greenhouse": SimpleNamespace(fetch=FAKE_RESULTS.__getitem__)})
     monkeypatch.setattr(ingest.time, "sleep", lambda s: None)
 
@@ -36,7 +50,12 @@ def test_main_writes_a_row_per_company_and_summarizes(monkeypatch, capsys):
 
     monkeypatch.setattr(db, "insert_raw_fetch", fake_insert)
 
+    ping_calls = []
+    monkeypatch.setattr(requests, "get", lambda *a, **k: ping_calls.append(a) or None)
+
     ingest.main()
+
+    assert ping_calls == []
 
     assert len(inserted) == 3
 
@@ -83,3 +102,73 @@ def test_resolve_companies_file_missing_raises_with_resolved_path(monkeypatch, t
 
     with pytest.raises(FileNotFoundError, match=re.escape(str(missing.resolve()))):
         ingest.resolve_companies_file()
+
+
+def test_healthcheck_pings_success_url_when_some_succeed(monkeypatch):
+    _stub_run(monkeypatch, fetch=FAKE_RESULTS.__getitem__)
+    monkeypatch.setenv("HEALTHCHECK_URL", "https://hc.example/ping/abc")
+
+    calls = []
+    monkeypatch.setattr(requests, "get", lambda url, **k: calls.append((url, k)) or None)
+
+    ingest.main()
+
+    assert calls == [("https://hc.example/ping/abc", {"timeout": 10})]
+
+
+def test_healthcheck_pings_fail_url_when_all_fail(monkeypatch):
+    _stub_run(monkeypatch, fetch=lambda token: ALL_FAILED_RESULT)
+    monkeypatch.setenv("HEALTHCHECK_URL", "https://hc.example/ping/abc")
+
+    calls = []
+    monkeypatch.setattr(requests, "get", lambda url, **k: calls.append((url, k)) or None)
+
+    ingest.main()
+
+    assert calls == [("https://hc.example/ping/abc/fail", {"timeout": 10})]
+
+
+def test_healthcheck_pings_fail_url_on_unhandled_exception_and_reraises(monkeypatch):
+    monkeypatch.delenv("HEALTHCHECK_URL", raising=False)
+    monkeypatch.setenv("HEALTHCHECK_URL", "https://hc.example/ping/abc")
+    monkeypatch.setattr(
+        ingest, "resolve_companies_file", lambda: (_ for _ in ()).throw(RuntimeError("boom"))
+    )
+
+    calls = []
+    monkeypatch.setattr(requests, "get", lambda url, **k: calls.append((url, k)) or None)
+
+    with pytest.raises(RuntimeError, match="boom"):
+        ingest.main()
+
+    assert calls == [("https://hc.example/ping/abc/fail", {"timeout": 10})]
+
+
+def test_healthcheck_pings_fail_url_when_zero_companies_attempted(monkeypatch):
+    _stub_run(
+        monkeypatch,
+        fetch=lambda token: (_ for _ in ()).throw(AssertionError("fetch should not be called")),
+        companies_file=FIXTURES / "companies_empty.yaml",
+    )
+    monkeypatch.setenv("HEALTHCHECK_URL", "https://hc.example/ping/abc")
+
+    calls = []
+    monkeypatch.setattr(requests, "get", lambda url, **k: calls.append((url, k)) or None)
+
+    ingest.main()
+
+    assert calls == [("https://hc.example/ping/abc/fail", {"timeout": 10})]
+
+
+def test_healthcheck_network_failure_is_swallowed(monkeypatch, capsys):
+    _stub_run(monkeypatch, fetch=FAKE_RESULTS.__getitem__)
+    monkeypatch.setenv("HEALTHCHECK_URL", "https://hc.example/ping/abc")
+
+    def raise_connection_error(url, **k):
+        raise requests.exceptions.ConnectionError("network is unreachable")
+
+    monkeypatch.setattr(requests, "get", raise_connection_error)
+
+    ingest.main()  # must not raise
+
+    assert "healthcheck ping failed" in capsys.readouterr().out
