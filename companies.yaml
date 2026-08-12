@@ -1,4 +1,3 @@
-# Greenhouse board tokens. Find via job-boards.greenhouse.io/<token>
 greenhouse:
   - monzo
   - gocardless
@@ -13,12 +12,10 @@ greenhouse:
   - point72
   - anthropic
   - polyai
-  - wayve
   - speechmatics
   - graphcore
   - stabilityai
   - isomorphiclabs
-  - skyscanner
   - cloudflare
   - datadog
   - databricks
@@ -32,22 +29,71 @@ greenhouse:
   - winton
   - janestreet
   - sumup
-  - lovable
   - scaleai
-  - labelbox
   - peak
   - duolingo
   - figma
-  - vercel
-  - clickhouse
   - elastic
   - mongodb
   - starburst
   - fivetran
-  - parametrix
   - shifttechnology
   - gradientai
   - squarepointcapital
   - drweng
-  - oldmissioncapital 
- 
+  - oldmissioncapital
+
+lever:
+  - zopa
+  - palantir
+  - spotify
+  - oliverwyman
+  - mistral
+  - labelbox
+
+ashby:
+  - freetrade
+  - clearbank
+  - marshmallow
+  - openai
+  - cohere
+  - synthesia
+  - elevenlabs
+  - wayve
+  - faculty
+  - deliveroo
+  - skyscanner
+  - trainline
+  - bumble
+  - snyk
+  - improbable
+  - zego
+  - tractable
+  - airwallex
+  - paddle
+  - pleo
+  - griffin
+  - oaknorth
+  - lendable
+  - elliptic
+  - lovable
+  - perplexity
+  - sierra
+  - harvey
+  - legora
+  - causaly
+  - deepl
+  - notion
+  - linear
+  - vercel
+  - supabase
+  - railway
+  - render
+  - neon
+  - clickhouse
+  - posthog
+  - confluent
+  - snowflake
+  - airbyte
+  - flock
+  - akur8
