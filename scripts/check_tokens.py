@@ -1,27 +1,26 @@
 #!/usr/bin/env python3
-"""Dev utility: probe Greenhouse board tokens for validity.
+"""Dev utility: probe candidate tokens for validity against a source's board API.
 
-Not part of the installed gradmarket package. Run directly:
+Not part of the installed gradmarket package. Calls the same fetch() used in
+production (gradmarket.sources), so results always match what ingest.py would
+see. Run directly:
 
-    python scripts/check_tokens.py
+    python scripts/check_tokens.py [candidates_file] [--source {greenhouse,lever,ashby}]
 """
 
 from __future__ import annotations
 
+import argparse
 import sys
 import time
 from pathlib import Path
 
-import requests
 import yaml
 
+from gradmarket.sources import SOURCES
+
 DEFAULT_CANDIDATES_FILE = Path(__file__).resolve().parent / "candidates.txt"
-URL_TEMPLATE = "https://boards-api.greenhouse.io/v1/boards/{token}/jobs"
-TIMEOUT = 10
-USER_AGENT = "gradmarket-token-check/0.1 (+https://github.com/ashwin-sajith/gradmarket)"
 INTER_REQUEST_SLEEP = 1
-MAX_RETRIES = 3
-BACKOFF_SECONDS = [1, 2, 4]
 
 
 def read_tokens(path: Path) -> list[str]:
@@ -34,79 +33,63 @@ def read_tokens(path: Path) -> list[str]:
     return tokens
 
 
-def is_transient(status_code: int) -> bool:
-    return status_code == 429 or status_code >= 500
+def status_label(result) -> str:
+    if result.status_code == 200 and result.payload is None:
+        return f"200 (bad payload: {result.error})"
+    if result.status_code is not None:
+        return str(result.status_code)
+    return f"error: {result.error}"
 
 
-def fetch(token: str) -> tuple[str, int | None]:
-    """Return (status_label, job_count). job_count is set only when status_label == '200'."""
-    url = URL_TEMPLATE.format(token=token)
-    headers = {"User-Agent": USER_AGENT}
-
-    for attempt in range(MAX_RETRIES + 1):
-        try:
-            resp = requests.get(url, headers=headers, timeout=TIMEOUT)
-        except requests.RequestException as exc:
-            if attempt < MAX_RETRIES:
-                time.sleep(BACKOFF_SECONDS[attempt])
-                continue
-            return f"error: {exc}", None
-
-        if resp.status_code == 200:
-            try:
-                data = resp.json()
-            except ValueError:
-                return "200 (bad json)", None
-            return "200", len(data.get("jobs", []))
-
-        if is_transient(resp.status_code) and attempt < MAX_RETRIES:
-            wait = BACKOFF_SECONDS[attempt]
-            retry_after = resp.headers.get("Retry-After")
-            if retry_after is not None:
-                try:
-                    wait = float(retry_after)
-                except ValueError:
-                    pass
-            time.sleep(wait)
-            continue
-
-        return str(resp.status_code), None
-
-    return "error: exhausted retries", None
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "candidates_file",
+        nargs="?",
+        type=Path,
+        default=DEFAULT_CANDIDATES_FILE,
+        help="Path to a newline-delimited token list (default: scripts/candidates.txt)",
+    )
+    parser.add_argument(
+        "--source",
+        choices=sorted(SOURCES),
+        default="greenhouse",
+        help="Source to probe tokens against (default: greenhouse)",
+    )
+    return parser.parse_args()
 
 
 def main() -> None:
-    if len(sys.argv) > 1:
-        candidates_file = Path(sys.argv[1])
-    else:
-        candidates_file = DEFAULT_CANDIDATES_FILE
+    args = parse_args()
 
-    if not candidates_file.is_file():
-        print(f"error: candidates file not found: {candidates_file}", file=sys.stderr)
+    if not args.candidates_file.is_file():
+        print(f"error: candidates file not found: {args.candidates_file}", file=sys.stderr)
         sys.exit(1)
 
-    tokens = read_tokens(candidates_file)
+    fetch = SOURCES[args.source].fetch
+    tokens = read_tokens(args.candidates_file)
     working: list[tuple[str, int]] = []
     failed: list[tuple[str, str]] = []
 
     for i, token in enumerate(tokens):
-        status, count = fetch(token)
-        if status == "200" and count is not None:
-            working.append((token, count))
-            print(f"{token}  {status}  {count} jobs")
+        result = fetch(token)
+        if result.payload is not None:
+            working.append((token, result.job_count))
+            print(f"{token}  {result.status_code}  {result.job_count} jobs")
         else:
-            failed.append((token, status))
-            print(f"{token}  {status}")
+            label = status_label(result)
+            failed.append((token, label))
+            print(f"{token}  {label}")
 
         if i < len(tokens) - 1:
             time.sleep(INTER_REQUEST_SLEEP)
 
-    print("\n# Working tokens — paste into companies.yaml")
+    print(f"\n# Working tokens ({args.source}) — paste into companies.yaml")
     print(yaml.dump([token for token, _ in working], default_flow_style=False, sort_keys=False))
 
     print("# Failed tokens")
-    for token, status in failed:
-        print(f"{token}: {status}")
+    for token, label in failed:
+        print(f"{token}: {label}")
 
 
 if __name__ == "__main__":

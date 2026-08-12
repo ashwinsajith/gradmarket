@@ -1,0 +1,37 @@
+{
+  "jobs": [
+    {
+      "id": "34413f8d-26bf-4bbc-8ade-eb309a0e2245",
+      "title": "Security Engineer, Cloud",
+      "department": "Engineering",
+      "team": "Backend",
+      "employmentType": "FullTime",
+      "location": "New York, NY (HQ)",
+      "publishedAt": "2026-04-07T17:12:35.753+00:00",
+      "isListed": true,
+      "isRemote": true,
+      "workplaceType": "Hybrid",
+      "jobUrl": "https://jobs.ashbyhq.com/example/34413f8d-26bf-4bbc-8ade-eb309a0e2245",
+      "applyUrl": "https://jobs.ashbyhq.com/example/34413f8d-26bf-4bbc-8ade-eb309a0e2245/application",
+      "descriptionHtml": "<h1>About the role</h1><p>We're hiring a security engineer.</p>",
+      "descriptionPlain": "About the role. We're hiring a security engineer."
+    },
+    {
+      "id": "9c3f2b1a-7e4d-4a1f-8b2c-1234567890ab",
+      "title": "Graduate Software Engineer",
+      "department": "Engineering",
+      "team": "Platform",
+      "employmentType": "FullTime",
+      "location": "London, UK",
+      "publishedAt": "2026-05-01T09:00:00.000+00:00",
+      "isListed": true,
+      "isRemote": false,
+      "workplaceType": "Onsite",
+      "jobUrl": "https://jobs.ashbyhq.com/example/9c3f2b1a-7e4d-4a1f-8b2c-1234567890ab",
+      "applyUrl": "https://jobs.ashbyhq.com/example/9c3f2b1a-7e4d-4a1f-8b2c-1234567890ab/application",
+      "descriptionHtml": "<h1>Graduate role</h1><p>Join our platform team.</p>",
+      "descriptionPlain": "Graduate role. Join our platform team."
+    }
+  ],
+  "apiVersion": "1"
+}

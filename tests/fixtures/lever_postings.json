@@ -1,0 +1,53 @@
+[
+  {
+    "id": "a1b2c3d4-0001-0000-0000-000000000001",
+    "text": "Graduate Software Engineer",
+    "categories": {
+      "team": "Engineering",
+      "department": "Product & Engineering",
+      "location": "London, UK",
+      "commitment": "Full-time",
+      "allLocations": ["London, UK"]
+    },
+    "createdAt": 1735689600000,
+    "hostedUrl": "https://jobs.lever.co/example/a1b2c3d4-0001",
+    "applyUrl": "https://jobs.lever.co/example/a1b2c3d4-0001/apply",
+    "description": "<p>We are looking for a graduate engineer.</p>",
+    "descriptionPlain": "We are looking for a graduate engineer.",
+    "workplaceType": "hybrid"
+  },
+  {
+    "id": "a1b2c3d4-0002-0000-0000-000000000002",
+    "text": "Data Science Intern",
+    "categories": {
+      "team": "Data",
+      "department": "Product & Engineering",
+      "location": "Remote, UK",
+      "commitment": "Internship",
+      "allLocations": ["Remote, UK"]
+    },
+    "createdAt": 1735776000000,
+    "hostedUrl": "https://jobs.lever.co/example/a1b2c3d4-0002",
+    "applyUrl": "https://jobs.lever.co/example/a1b2c3d4-0002/apply",
+    "description": "<p>Summer internship on the data science team.</p>",
+    "descriptionPlain": "Summer internship on the data science team.",
+    "workplaceType": "remote"
+  },
+  {
+    "id": "a1b2c3d4-0003-0000-0000-000000000003",
+    "text": "Product Design Graduate",
+    "categories": {
+      "team": "Design",
+      "department": "Product & Engineering",
+      "location": "London, UK",
+      "commitment": "Full-time",
+      "allLocations": ["London, UK"]
+    },
+    "createdAt": 1735862400000,
+    "hostedUrl": "https://jobs.lever.co/example/a1b2c3d4-0003",
+    "applyUrl": "https://jobs.lever.co/example/a1b2c3d4-0003/apply",
+    "description": "<p>Join our design team as a graduate.</p>",
+    "descriptionPlain": "Join our design team as a graduate.",
+    "workplaceType": "onsite"
+  }
+]

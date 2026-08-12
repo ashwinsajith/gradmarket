@@ -12,6 +12,13 @@ from gradmarket.sources.base import FetchResult
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
+
+def test_sources_registry_includes_all_three_with_no_ingest_changes():
+    """New sources register themselves in gradmarket.sources; ingest.py never
+    needs touching to pick them up — that's the interchangeability contract."""
+    assert set(ingest.SOURCES) == {"greenhouse", "lever", "ashby"}
+
+
 FAKE_RESULTS = {
     "good": FetchResult(status_code=200, payload={"jobs": [{"id": 1}, {"id": 2}]}, job_count=2),
     "bad_status": FetchResult(status_code=404, payload=None, job_count=0, error=None),

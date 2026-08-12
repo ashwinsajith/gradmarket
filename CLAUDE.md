@@ -28,6 +28,10 @@ Postings are observed over time, not stored once:
   filled/withdrawn and it's the most valuable derived signal in the project.
 - NEVER delete a posting row. Disappearance is data.
 - `posting_versions` appends a row only when the content hash changes.
+- Lever's `raw_fetches.payload` is a concatenation of paginated responses, not
+  a single verbatim server response, and is a bare JSON array rather than a
+  `{"jobs": [...]}` object like Greenhouse/Ashby. Both matter for the parsing
+  layer.
 
 ## Gotchas
 - A 200 response with an empty jobs array does NOT mean all jobs closed. It usually means the company switched ATS provider. Treating it as closure corrupts history for every posting they had. Handle empty-but-200 distinctly.
