@@ -2,6 +2,7 @@
 
 No parsing, no postings table — that's a separate pass over raw_fetches.
 Contains no provider-specific logic; dispatches through gradmarket.sources.SOURCES.
+Independently runnable — pings nothing itself; see pipeline.py for that.
 """
 
 from __future__ import annotations
@@ -10,25 +11,12 @@ import os
 import time
 from pathlib import Path
 
-import requests
 import yaml
 
 from gradmarket import db
 from gradmarket.sources import SOURCES
 
 INTER_REQUEST_SLEEP = 1
-HEALTHCHECK_TIMEOUT = 10
-
-
-def ping_healthcheck(*, failed: bool) -> None:
-    base_url = os.environ.get("HEALTHCHECK_URL")
-    if not base_url:
-        return
-    url = f"{base_url}/fail" if failed else base_url
-    try:
-        requests.get(url, timeout=HEALTHCHECK_TIMEOUT)
-    except requests.RequestException as exc:
-        print(f"healthcheck ping failed: {exc}")
 
 
 def resolve_companies_file() -> Path:
@@ -45,7 +33,7 @@ def load_companies(path: Path) -> dict[str, list[str]]:
         return yaml.safe_load(f) or {}
 
 
-def _run() -> tuple[int, int]:
+def run() -> tuple[int, int]:
     """Run the ingest, returning (attempted, succeeded)."""
     companies = load_companies(resolve_companies_file())
     jobs_to_fetch = [
@@ -97,13 +85,7 @@ def _run() -> tuple[int, int]:
 
 
 def main() -> None:
-    try:
-        _, succeeded = _run()
-    except Exception:
-        ping_healthcheck(failed=True)
-        raise
-
-    ping_healthcheck(failed=succeeded == 0)
+    run()
 
 
 if __name__ == "__main__":

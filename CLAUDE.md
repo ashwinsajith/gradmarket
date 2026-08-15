@@ -6,6 +6,8 @@ student project, ships early October 2026.
 
 ## Commands
 - Scraper:  `python -m gradmarket.ingest`
+- Parser:   `python -m gradmarket.parse_run`
+- Pipeline: `python -m gradmarket.pipeline` (ingest then parse; owns the healthcheck ping for both — use this in production, not the two commands chained)
 - Tests:    `pytest`
 - Lint:     `ruff check .`
 
@@ -26,6 +28,14 @@ Postings are observed over time, not stored once:
 - `last_seen_at` updates on every run where the posting appears in the feed.
 - A posting missing from the feed sets `is_open = false`. This is our proxy for
   filled/withdrawn and it's the most valuable derived signal in the project.
+- `closed_at` is set once, like `first_seen_at` — a posting that reopens and
+  closes again later does NOT get a new `closed_at`. Close-detection's UPDATE
+  guards on `closed_at IS NULL` for exactly this reason.
+- Close-detection skips a company entirely (no closures applied, just logs a
+  warning) if its feed came back empty, or if it dropped by more than 50%
+  since the last successful fetch — but only when that previous fetch had at
+  least 10 postings. Below that, a real drop looks identical to a collapse,
+  so small boards are never guarded.
 - NEVER delete a posting row. Disappearance is data.
 - `posting_versions` appends a row only when the content hash changes.
 - Lever's `raw_fetches.payload` is a concatenation of paginated responses, not
