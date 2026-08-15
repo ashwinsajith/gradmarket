@@ -13,6 +13,7 @@ import argparse
 from typing import Any
 
 from gradmarket import db
+from gradmarket.config import load_companies, resolve_companies_file
 from gradmarket.parse import EXTRACTORS
 
 # Empty feeds always trip the guard. A shrink of more than this ratio only
@@ -96,6 +97,35 @@ def process_row(conn: Any, row: dict, *, dry_run: bool = False) -> dict:
     return {"inserted": inserted, "updated": updated, "closed": closed, "versions": len(changed_versions)}
 
 
+def _configured_source_companies() -> set[tuple[str, str]]:
+    companies = load_companies(resolve_companies_file())
+    return {(source_name, token) for source_name, tokens in companies.items() for token in tokens}
+
+
+def _reconcile_orphaned_companies(conn: Any, *, dry_run: bool = False) -> tuple[list[str], int]:
+    """Close out postings for any (source, company) no longer in
+    companies.yaml at all — e.g. removed, or moved to a different source.
+    Those never appear in a feed again, so close_missing_postings never runs
+    for them; without this they'd stay is_open=true forever.
+
+    Runs unconditionally after the main row loop, including under --full, so
+    a rebuild reaches the same end state as incremental runs.
+    """
+    configured = _configured_source_companies()
+    orphaned = db.get_open_source_companies(conn) - configured
+
+    reconciled_companies = []
+    total_closed = 0
+    for source, company in sorted(orphaned):
+        closed = db.close_orphaned_postings(conn, source=source, company=company, commit=not dry_run)
+        if closed:
+            reconciled_companies.append(f"{source}/{company}")
+            total_closed += closed
+            print(f"{source}/{company}: reconciled — no longer in companies.yaml, closed {closed} posting(s)")
+
+    return reconciled_companies, total_closed
+
+
 def run(*, full: bool = False, dry_run: bool = False) -> dict:
     """dry_run runs all the same SQL — including schema setup, which always
     commits, since the tables have to exist for any of this to work — but
@@ -124,6 +154,8 @@ def run(*, full: bool = False, dry_run: bool = False) -> dict:
             totals[key] += stats[key]
         processed += 1
 
+    reconciled_companies, postings_reconciled = _reconcile_orphaned_companies(conn, dry_run=dry_run)
+
     if dry_run:
         conn.rollback()
     conn.close()
@@ -137,6 +169,8 @@ def run(*, full: bool = False, dry_run: bool = False) -> dict:
         "postings_updated": totals["updated"],
         "postings_closed": totals["closed"],
         "versions_appended": totals["versions"],
+        "reconciled_companies": reconciled_companies,
+        "postings_reconciled": postings_reconciled,
     }
 
 
@@ -165,6 +199,12 @@ def main() -> None:
         f"{summary['postings_updated']} updated, {summary['postings_closed']} closed"
     )
     print(f"{prefix}posting_versions: {summary['versions_appended']} appended")
+    if summary["reconciled_companies"]:
+        print(
+            f"{prefix}reconciled {len(summary['reconciled_companies'])} company/companies no longer "
+            f"in companies.yaml, closing {summary['postings_reconciled']} posting(s): "
+            f"{', '.join(summary['reconciled_companies'])}"
+        )
 
 
 if __name__ == "__main__":

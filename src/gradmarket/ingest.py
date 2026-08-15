@@ -7,30 +7,13 @@ Independently runnable — pings nothing itself; see pipeline.py for that.
 
 from __future__ import annotations
 
-import os
 import time
-from pathlib import Path
-
-import yaml
 
 from gradmarket import db
+from gradmarket.config import load_companies, resolve_companies_file
 from gradmarket.sources import SOURCES
 
 INTER_REQUEST_SLEEP = 1
-
-
-def resolve_companies_file() -> Path:
-    env_value = os.environ.get("COMPANIES_FILE")
-    path = Path(env_value) if env_value else Path.cwd() / "companies.yaml"
-    path = path.resolve()
-    if not path.is_file():
-        raise FileNotFoundError(f"companies file not found: {path}")
-    return path
-
-
-def load_companies(path: Path) -> dict[str, list[str]]:
-    with path.open() as f:
-        return yaml.safe_load(f) or {}
 
 
 def run() -> tuple[int, int]:

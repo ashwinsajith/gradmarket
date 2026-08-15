@@ -310,3 +310,39 @@ def close_missing_postings(
     if commit:
         conn.commit()
     return count
+
+
+def get_open_source_companies(conn: psycopg.Connection) -> set[tuple[str, str]]:
+    """Distinct (source, company) pairs with at least one open posting —
+    reconciliation's candidate set to check against companies.yaml."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT DISTINCT source, company FROM postings WHERE is_open = true")
+        return {(row[0], row[1]) for row in cur.fetchall()}
+
+
+def close_orphaned_postings(
+    conn: psycopg.Connection, *, source: str, company: str, commit: bool = True
+) -> int:
+    """Close every open posting for a company that no longer appears in
+    companies.yaml at all — it stopped being fetched entirely, rather than
+    being observed missing from a feed.
+
+    closed_at is set to each row's own last_seen_at, not now: that's the last
+    moment it was actually seen, and reconciliation happening today shouldn't
+    imply it closed today. Same closed_at IS NULL write-once guard as
+    close_missing_postings.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE postings
+            SET is_open = false, closed_at = last_seen_at
+            WHERE source = %s AND company = %s
+              AND is_open = true AND closed_at IS NULL
+            """,
+            (source, company),
+        )
+        count = cur.rowcount
+    if commit:
+        conn.commit()
+    return count

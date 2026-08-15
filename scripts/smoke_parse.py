@@ -30,6 +30,12 @@ def main() -> None:
         f"{summary['postings_updated']} would be updated, {summary['postings_closed']} would be closed"
     )
     print(f"[dry run] posting_versions: {summary['versions_appended']} would be appended")
+    if summary["reconciled_companies"]:
+        print(
+            f"[dry run] would reconcile {len(summary['reconciled_companies'])} company/companies no "
+            f"longer in companies.yaml, closing {summary['postings_reconciled']} posting(s): "
+            f"{', '.join(summary['reconciled_companies'])}"
+        )
 
     conn = db.get_connection()
     with conn.cursor() as cur:

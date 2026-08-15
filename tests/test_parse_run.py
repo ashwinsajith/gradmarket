@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import copy
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 
 from gradmarket import parse_run
 
+FIXTURES = Path(__file__).resolve().parent / "fixtures"
 T0 = datetime(2026, 1, 1, tzinfo=UTC)
 
 
@@ -194,11 +196,36 @@ class FakeDB:
             self.commit()
         return count
 
+    def get_open_source_companies(self, conn):
+        return {(row["source"], row["company"]) for row in self.postings.values() if row["is_open"]}
+
+    def close_orphaned_postings(self, conn, *, source, company, commit=True):
+        if not commit:
+            self._ensure_snapshot()
+        count = 0
+        for row in self.postings.values():
+            if (
+                row["source"] == source
+                and row["company"] == company
+                and row["is_open"]
+                and row["closed_at"] is None
+            ):
+                row["is_open"] = False
+                row["closed_at"] = row["last_seen_at"]
+                count += 1
+        if commit:
+            self.commit()
+        return count
+
 
 @pytest.fixture
 def fake_db(monkeypatch):
     fake = FakeDB()
     monkeypatch.setattr(parse_run, "db", fake)
+    # Default companies.yaml for tests: "acme" configured under greenhouse, so
+    # existing tests (all of which use company="acme") see no reconciliation
+    # activity unless a test explicitly points COMPANIES_FILE elsewhere.
+    monkeypatch.setenv("COMPANIES_FILE", str(FIXTURES / "companies_parse_test.yaml"))
     return fake
 
 
@@ -438,3 +465,91 @@ def test_dry_run_reports_changes_but_leaves_database_untouched(fake_db):
     assert real_summary["processed"] == 1
     assert fake_db.postings[("greenhouse", "acme", "3")]["is_open"] is True
     assert fake_db.postings[("greenhouse", "acme", "2")]["is_open"] is False
+
+
+# --- reconciliation: companies removed from (or moved out of) companies.yaml ---
+
+
+def test_reconciliation_leaves_configured_company_untouched(fake_db):
+    # fake_db fixture already points COMPANIES_FILE at a config with acme listed
+    process(fake_db, make_row(1, gh_payload([gh_job(1, "A")]), T0))
+
+    summary = parse_run.run()
+
+    posting = fake_db.postings[("greenhouse", "acme", "1")]
+    assert posting["is_open"] is True
+    assert posting["closed_at"] is None
+    assert summary["reconciled_companies"] == []
+    assert summary["postings_reconciled"] == 0
+
+
+def test_reconciliation_closes_postings_for_company_removed_from_config(fake_db, monkeypatch, capsys):
+    process(fake_db, make_row(1, gh_payload([gh_job(1, "A"), gh_job(2, "B")]), T0))
+
+    # acme is removed from companies.yaml entirely
+    monkeypatch.setenv("COMPANIES_FILE", str(FIXTURES / "companies_empty.yaml"))
+
+    summary = parse_run.run()
+
+    for external_id in ("1", "2"):
+        posting = fake_db.postings[("greenhouse", "acme", external_id)]
+        assert posting["is_open"] is False
+        assert posting["closed_at"] == T0  # its own last_seen_at, not "now"
+
+    assert summary["reconciled_companies"] == ["greenhouse/acme"]
+    assert summary["postings_reconciled"] == 2
+    assert "reconciled" in capsys.readouterr().out
+
+
+def test_reconciliation_respects_write_once_closed_at(fake_db, monkeypatch):
+    process(fake_db, make_row(1, gh_payload([gh_job(1, "A"), gh_job(2, "B")]), T0))
+
+    t1 = T0 + timedelta(days=1)
+    process(fake_db, make_row(2, gh_payload([gh_job(2, "B")]), t1))  # job 1 closes normally
+
+    job1_closed_at_before = fake_db.postings[("greenhouse", "acme", "1")]["closed_at"]
+    assert job1_closed_at_before == t1
+
+    monkeypatch.setenv("COMPANIES_FILE", str(FIXTURES / "companies_empty.yaml"))
+
+    summary = parse_run.run()
+
+    # job 1 was already closed — reconciliation must not touch it again
+    job1 = fake_db.postings[("greenhouse", "acme", "1")]
+    assert job1["closed_at"] == t1
+
+    # job 2 was still open — reconciliation closes it with its own last_seen_at
+    job2 = fake_db.postings[("greenhouse", "acme", "2")]
+    assert job2["is_open"] is False
+    assert job2["closed_at"] == t1
+
+    assert summary["postings_reconciled"] == 1  # only job 2
+
+
+def test_reconciliation_runs_in_full_rebuild(fake_db, monkeypatch):
+    process(fake_db, make_row(1, gh_payload([gh_job(1, "A")]), T0))
+
+    monkeypatch.setenv("COMPANIES_FILE", str(FIXTURES / "companies_empty.yaml"))
+
+    summary = parse_run.run(full=True)
+
+    posting = fake_db.postings[("greenhouse", "acme", "1")]
+    assert posting["is_open"] is False
+    assert posting["closed_at"] == T0
+    assert summary["reconciled_companies"] == ["greenhouse/acme"]
+    assert summary["postings_reconciled"] == 1
+
+
+def test_reconciliation_respects_dry_run(fake_db, monkeypatch):
+    process(fake_db, make_row(1, gh_payload([gh_job(1, "A")]), T0))
+
+    monkeypatch.setenv("COMPANIES_FILE", str(FIXTURES / "companies_empty.yaml"))
+
+    summary = parse_run.run(dry_run=True)
+
+    assert summary["reconciled_companies"] == ["greenhouse/acme"]
+    assert summary["postings_reconciled"] == 1
+
+    posting = fake_db.postings[("greenhouse", "acme", "1")]
+    assert posting["is_open"] is True  # unchanged — dry run rolled back
+    assert posting["closed_at"] is None

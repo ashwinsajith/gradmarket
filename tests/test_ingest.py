@@ -1,10 +1,7 @@
 from __future__ import annotations
 
-import re
 from pathlib import Path
 from types import SimpleNamespace
-
-import pytest
 
 from gradmarket import db, ingest
 from gradmarket.sources.base import FetchResult
@@ -77,30 +74,3 @@ def test_run_returns_attempted_and_succeeded_counts(monkeypatch):
 
     assert attempted == 3
     assert succeeded == 1
-
-
-def test_resolve_companies_file_uses_env_var_when_set(monkeypatch):
-    target = FIXTURES / "companies_test.yaml"
-    monkeypatch.setenv("COMPANIES_FILE", str(target))
-
-    resolved = ingest.resolve_companies_file()
-
-    assert resolved == target.resolve()
-
-
-def test_resolve_companies_file_defaults_to_cwd(monkeypatch, tmp_path):
-    monkeypatch.delenv("COMPANIES_FILE", raising=False)
-    (tmp_path / "companies.yaml").write_text("greenhouse:\n  - foo\n")
-    monkeypatch.chdir(tmp_path)
-
-    resolved = ingest.resolve_companies_file()
-
-    assert resolved == (tmp_path / "companies.yaml").resolve()
-
-
-def test_resolve_companies_file_missing_raises_with_resolved_path(monkeypatch, tmp_path):
-    missing = tmp_path / "nope.yaml"
-    monkeypatch.setenv("COMPANIES_FILE", str(missing))
-
-    with pytest.raises(FileNotFoundError, match=re.escape(str(missing.resolve()))):
-        ingest.resolve_companies_file()
