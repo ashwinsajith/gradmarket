@@ -4,6 +4,8 @@ Daily collection of UK graduate and internship postings from company ATS
 boards (Greenhouse, Lever, Ashby). Semantic search over the results. Solo
 student project, ships early October 2026.
 
+Deferred work (things noticed but not built) lives in [IDEAS.md](IDEAS.md).
+
 ## Commands
 - Scraper:  `python -m gradmarket.ingest`
 - Parser:   `python -m gradmarket.parse_run`
