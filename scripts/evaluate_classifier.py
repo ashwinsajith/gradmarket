@@ -1,22 +1,27 @@
 #!/usr/bin/env python3
 """Dev utility: evaluate the classifier against human-labelled ground truth.
 
-Not part of the installed gradmarket package. Joins data/eval/labels.csv to
-postings by url, then runs the CURRENT classify_location/classify_seniority
-functions fresh against each posting's title/location/description — not the
-stored location_class/seniority_class columns. That means tuning the rules
-in gradmarket/classify/ and re-running this script always reflects the
-latest code, with no need to re-run classify_run first.
+Not part of the installed gradmarket package. Joins a labels CSV to postings
+by url, then runs the CURRENT classify_location/classify_seniority functions
+fresh against each posting's title/location/description — not the stored
+location_class/seniority_class columns. That means tuning the rules in
+gradmarket/classify/ and re-running this script always reflects the latest
+code, with no need to re-run classify_run first.
 
-Splits deterministically by hashing the url (not randomly, and not by row
-order): 60% dev, 40% test. A url's split never changes as more labels get
-added, and results are reproducible across machines/runs with no seed to
-manage. Run directly:
+--labels defaults to data/eval/labels.csv, split deterministically by
+hashing the url (not randomly, and not by row order): 60% dev, 40% test. A
+url's split never changes as more labels get added, and results are
+reproducible across machines/runs with no seed to manage.
 
-    python scripts/evaluate_classifier.py [--split {dev,test}]
+Pass a different --labels (e.g. a separate holdout file) and the dev/test
+split is skipped entirely — every row is evaluated. A holdout file is
+already held out; splitting it again would just halve the sample for
+nothing. Run directly:
 
-split defaults to dev. Tune against dev only — see the warning this prints
-when run on test.
+    python scripts/evaluate_classifier.py [--labels PATH] [--split {dev,test}]
+
+split defaults to dev and only applies to the default labels file. Tune
+against dev only — see the warning this prints when run on test.
 """
 
 from __future__ import annotations
@@ -30,7 +35,7 @@ from gradmarket import db
 from gradmarket.classify.location import classify_location
 from gradmarket.classify.seniority import classify_seniority
 
-LABELS_PATH = Path(__file__).resolve().parent.parent / "data" / "eval" / "labels.csv"
+DEFAULT_LABELS_PATH = Path(__file__).resolve().parent.parent / "data" / "eval" / "labels.csv"
 DEV_FRACTION = 0.6
 HASH_SPACE = 2**32
 
@@ -123,24 +128,42 @@ def print_precision_recall_f1(pairs: list[tuple[str, str]], classes: list[str], 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument(
+        "--labels",
+        type=Path,
+        default=DEFAULT_LABELS_PATH,
+        help=f"Labels CSV to evaluate (default: {DEFAULT_LABELS_PATH})",
+    )
     parser.add_argument("--split", choices=["dev", "test"], default="dev")
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
+    is_default_labels = args.labels.resolve() == DEFAULT_LABELS_PATH
 
-    if args.split == "test":
-        print("=" * 72)
-        print("WARNING: running on the TEST split.")
-        print("This number is only honest if the classifier rules were NOT tuned")
-        print("against anything you've seen from test before. If you've looked at")
-        print("test failures and adjusted gradmarket/classify/ in response, this")
-        print("number no longer measures what you think it measures.")
-        print("=" * 72)
+    print(f"Evaluating {args.labels}")
 
-    labels = load_labels(LABELS_PATH)
-    split_labels = [row for row in labels if split_for_url(row["url"]) == args.split]
+    labels = load_labels(args.labels)
+
+    if is_default_labels:
+        if args.split == "test":
+            print("=" * 72)
+            print("WARNING: running on the TEST split.")
+            print("This number is only honest if the classifier rules were NOT tuned")
+            print("against anything you've seen from test before. If you've looked at")
+            print("test failures and adjusted gradmarket/classify/ in response, this")
+            print("number no longer measures what you think it measures.")
+            print("=" * 72)
+        split_labels = [row for row in labels if split_for_url(row["url"]) == args.split]
+        split_name = args.split
+    else:
+        # A non-default labels file is already a deliberately separate
+        # holdout — splitting it again would just halve the sample for no
+        # reason, so --split is ignored and every row gets evaluated.
+        print("non-default --labels: evaluating all rows, no dev/test split")
+        split_labels = labels
+        split_name = "all"
 
     conn = db.get_connection()
     postings_by_url = fetch_postings_by_url(conn, [row["url"] for row in split_labels])
@@ -176,7 +199,7 @@ def main() -> None:
                 }
             )
 
-    print(f"\n[{args.split}] {len(split_labels)} labelled row(s), {len(unresolved)} unresolved (url not found)")
+    print(f"\n[{split_name}] {len(split_labels)} labelled row(s), {len(unresolved)} unresolved (url not found)")
 
     print_confusion_matrix(location_pairs, LOCATION_CLASSES, "location")
     print_precision_recall_f1(location_pairs, LOCATION_CLASSES, "location")

@@ -3,23 +3,29 @@
 
 Not part of the installed gradmarket package. Pulls a stratified random
 sample of open postings, jointly stratified on two axes — UK/non-UK location
-and early-careers/not title — targeting ~25 in each of the 4 cells (100
-total), since a pure random sample skews heavily toward US, senior-titled
-roles and wastes most of the labelling effort on postings from buckets you
-don't actually need more examples of. Deterministic seed, so re-running
-reproduces the same sample.
+and early-careers/not title — targeting an even split across the 4 cells,
+since a pure random sample skews heavily toward US, senior-titled roles and
+wastes most of the labelling effort on postings from buckets you don't
+actually need more examples of. Deterministic seed, so re-running with the
+same --seed reproduces the same sample.
 
---exclude takes a path to an already-labelled CSV (e.g. a prior sample) and
-drops any url labelled there from the candidate pool, so you never label the
-same posting twice across samples. Matches on url rather than posting_id,
-since a --full parse rebuild resets the id sequence and makes old ids
-unstable — see scripts/rekey_labels.py.
+--exclude takes a path to an already-labelled CSV (e.g. a prior sample or
+data/eval/labels.csv) and drops any url labelled there from the candidate
+pool, so you never label the same posting twice across samples. Matches on
+url rather than posting_id, since a --full parse rebuild resets the id
+sequence and makes old ids unstable — see scripts/rekey_labels.py.
 
-Writes data/eval/sample2.csv, which is gitignored: description text is the
-companies' copyright (see CLAUDE.md) and this file carries snippets of it.
-Run directly:
+Writes into data/eval/, which is gitignored except for labels.csv: the
+description snippet is company-owned content (see CLAUDE.md). Run directly:
 
-    python scripts/sample_for_labelling.py [--exclude data/eval/sample.csv]
+    python scripts/sample_for_labelling.py [options]
+
+Options (all optional):
+  --exclude PATH          CSV whose labelled urls should never be re-sampled
+  --output PATH           default: data/eval/sample.csv
+  --sample-size N         default: 100
+  --seed N                default: 42
+  --snippet-length N      default: 1500
 """
 
 from __future__ import annotations
@@ -33,10 +39,13 @@ from pathlib import Path
 
 from gradmarket import db
 
-SEED = 43  # different from sample.csv's 42, so the two samples don't collide
-SAMPLE_SIZE = 100
-SNIPPET_LENGTH = 300
-OUTPUT_PATH = Path(__file__).resolve().parent.parent / "data" / "eval" / "sample2.csv"
+DEFAULT_OUTPUT_PATH = Path(__file__).resolve().parent.parent / "data" / "eval" / "sample.csv"
+DEFAULT_SAMPLE_SIZE = 100
+DEFAULT_SEED = 42
+# 300 chars only ever captured company boilerplate ("About us...") and never
+# reached the actual requirements section — 1500 gets meaningfully further
+# into the posting without pulling in the entire description.
+DEFAULT_SNIPPET_LENGTH = 1500
 
 FIELDNAMES = [
     "posting_id",
@@ -169,6 +178,30 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Path to an existing labelled CSV; urls already labelled there are never re-sampled",
     )
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=DEFAULT_OUTPUT_PATH,
+        help=f"Output CSV path (default: {DEFAULT_OUTPUT_PATH})",
+    )
+    parser.add_argument(
+        "--sample-size",
+        type=int,
+        default=DEFAULT_SAMPLE_SIZE,
+        help=f"Total rows to sample (default: {DEFAULT_SAMPLE_SIZE})",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=DEFAULT_SEED,
+        help=f"Random seed for reproducibility (default: {DEFAULT_SEED})",
+    )
+    parser.add_argument(
+        "--snippet-length",
+        type=int,
+        default=DEFAULT_SNIPPET_LENGTH,
+        help=f"description_snippet length in characters (default: {DEFAULT_SNIPPET_LENGTH})",
+    )
     return parser.parse_args()
 
 
@@ -198,15 +231,15 @@ def main() -> None:
     for (uk, early), pool in cells.items():
         print(f"  UK={uk} early-career={early}: {len(pool)} available")
 
-    rng = random.Random(SEED)
-    sample = stratified_sample(cells, SAMPLE_SIZE, rng)
+    rng = random.Random(args.seed)
+    sample = stratified_sample(cells, args.sample_size, rng)
 
-    OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with OUTPUT_PATH.open("w", newline="", encoding="utf-8") as f:
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    with args.output.open("w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow(FIELDNAMES)
         for p in sample:
-            snippet = strip_html(p["description_raw"] or "")[:SNIPPET_LENGTH]
+            snippet = strip_html(p["description_raw"] or "")[: args.snippet_length]
             writer.writerow(
                 [p["id"], p["source"], p["company"], p["title"], p["location"], p["url"], snippet, "", ""]
             )
@@ -214,12 +247,12 @@ def main() -> None:
     uk_in_sample = sum(1 for p in sample if is_uk(p["location"]))
     early_in_sample = sum(1 for p in sample if is_early_career(p["title"]))
     print(
-        f"wrote {len(sample)} postings to {OUTPUT_PATH} "
+        f"wrote {len(sample)} postings to {args.output} "
         f"({uk_in_sample} UK-matching, {len(sample) - uk_in_sample} other; "
         f"{early_in_sample} early-career, {len(sample) - early_in_sample} other)"
     )
-    if len(sample) < SAMPLE_SIZE:
-        print(f"warning: only {len(sample)} open postings available, short of the {SAMPLE_SIZE} target")
+    if len(sample) < args.sample_size:
+        print(f"warning: only {len(sample)} open postings available, short of the {args.sample_size} target")
 
 
 if __name__ == "__main__":

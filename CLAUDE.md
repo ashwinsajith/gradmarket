@@ -75,3 +75,7 @@ Postings are observed over time, not stored once:
 - Do not execute `parse_run --full`, full ingests, or anything expected to
 take more than ~60 seconds. Tell me the command and I'll run it myself.
 Polling a long operation wastes context for no benefit.
+
+## Evaluation data
+- `data/eval/labels.csv` — union of all labelling batches (250 rows). Rules were developed while reading these, so accuracy measured on it is optimistic.
+- `data/eval/holdout.csv` — 50 rows labelled after the classifier was written, never used for rule development. This is the honest number. Do not tune against it.

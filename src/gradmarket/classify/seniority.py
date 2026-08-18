@@ -4,24 +4,39 @@ classify_seniority(title, description) -> "early" | "experienced" | "unknown"
 
 Precedence order matters — checked top to bottom, first match wins:
   1. Title: recruiter/recruiting/talent acquisition        -> experienced
-  2. Title: senior/staff/principal/lead/head of/director/
-     manager/VP/chief/sr./executive/owner/specialist        -> experienced
-  3. Title: graduate/intern/internship/junior/campus/
+  2. Title contains BOTH an experienced marker (rule 3) and
+     an early-careers keyword (rule 4)                      -> early
+     e.g. "Junior Software Engineering Manager" — an early
+     keyword next to a senior-sounding job function almost
+     always means an entry-level role with that function,
+     not a senior person.
+  3. Title: senior/staff/principal/lead/head of/director/
+     manager/VP/chief/sr./executive/owner                   -> experienced
+  4. Title: graduate/intern/internship/junior/campus/
      placement/trainee/apprentice/new grad/summer analyst/
      early career/entry level/working student               -> early
-  4. Description: an experience floor above zero
+  5. Description: an experience floor above zero
      ("3+ years", "N+ years in a ... role")                  -> experienced
-  5. Description: positive early evidence ("0-N years",
+  6. Description: positive early evidence ("0-N years",
      "new grads", "no prior experience", "final year",
      "penultimate year", "graduating in 20XX", CPT/OPT,
      "students eligible")                                    -> early
-  6. Otherwise                                                -> experienced
+  7. Otherwise                                                -> experienced
      (absence of evidence is not evidence of early)
 
-Rules 1-3 look at the title only, so e.g. "Campus Recruiter" and "Head of
-Early Career Recruiting" hit rule 1 before campus/early-career (rule 3)
-ever gets a chance — recruiting the role is itself an experienced job,
-regardless of which audience it recruits for.
+Rules 1-4 look at the title only, so e.g. "Campus Recruiter" and "Head of
+Early Career Recruiting" hit rule 1 before campus/early-career (rule 4) ever
+gets a chance — recruiting the role is itself an experienced job, regardless
+of which audience it recruits for. Rule 1 is deliberately NOT part of the
+rule 2 conflict check: a recruiting title is experienced even when it also
+contains an early-careers keyword.
+
+"Specialist" is deliberately not an experienced marker — it's a role
+descriptor ("Data Specialist", "Support Specialist"), not a seniority level,
+and shows up at every level from junior to principal. Titles like "Junior
+Platform Specialist" or "Trading Infrastructure Specialist – Graduate
+Programme" used to be misread as experienced because "specialist" hit rule 3
+before "junior"/"graduate" ever got a chance at rule 4.
 """
 
 from __future__ import annotations
@@ -31,7 +46,7 @@ import re
 RECRUITER_TITLE_PATTERN = re.compile(r"\b(recruiter|recruiting|talent acquisition)\b", re.IGNORECASE)
 
 SENIOR_TITLE_PATTERN = re.compile(
-    r"\b(senior|staff|principal|lead|head of|director|manager|vp|chief|executive|owner|specialist)\b"
+    r"\b(senior|staff|principal|lead|head of|director|manager|vp|chief|executive|owner)\b"
     r"|\bsr\b\.?",
     re.IGNORECASE,
 )
@@ -78,17 +93,24 @@ def classify_seniority(title: str | None, description: str | None) -> str:
     description_text = description or ""
 
     # Nothing at all to go on — genuinely unknown, not a guessed default.
-    # The precedence rules below never produce "unknown" themselves; rule 6
+    # The precedence rules below never produce "unknown" themselves; rule 7
     # is an unconditional catch-all once there's *some* text to check.
     if not title_text and not description_text:
         return "unknown"
 
     if RECRUITER_TITLE_PATTERN.search(title_text):
         return "experienced"
-    if SENIOR_TITLE_PATTERN.search(title_text):
-        return "experienced"
-    if EARLY_TITLE_PATTERN.search(title_text):
+
+    has_experienced_marker = bool(SENIOR_TITLE_PATTERN.search(title_text))
+    has_early_marker = bool(EARLY_TITLE_PATTERN.search(title_text))
+
+    if has_experienced_marker and has_early_marker:
         return "early"
+    if has_experienced_marker:
+        return "experienced"
+    if has_early_marker:
+        return "early"
+
     if _has_experience_floor(description_text):
         return "experienced"
     if _has_early_evidence(description_text):
