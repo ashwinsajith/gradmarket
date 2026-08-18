@@ -58,9 +58,16 @@ CREATE TABLE IF NOT EXISTS postings (
     is_open BOOLEAN NOT NULL DEFAULT true,
     closed_at TIMESTAMPTZ,
     content_hash TEXT NOT NULL,
+    location_class TEXT,
+    seniority_class TEXT,
+    classified_at TIMESTAMPTZ,
     UNIQUE (source, company, external_id)
 );
 CREATE INDEX IF NOT EXISTS postings_source_company_idx ON postings (source, company);
+ALTER TABLE postings ADD COLUMN IF NOT EXISTS location_class TEXT;
+ALTER TABLE postings ADD COLUMN IF NOT EXISTS seniority_class TEXT;
+ALTER TABLE postings ADD COLUMN IF NOT EXISTS classified_at TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS postings_classified_at_idx ON postings (classified_at);
 
 CREATE TABLE IF NOT EXISTS posting_versions (
     id BIGSERIAL PRIMARY KEY,
@@ -346,3 +353,63 @@ def close_orphaned_postings(
     if commit:
         conn.commit()
     return count
+
+
+def get_postings_to_classify(conn: psycopg.Connection, *, full: bool = False) -> list[dict]:
+    """id, title, location, and latest description for every posting still
+    needing classification (classified_at IS NULL), or every posting at all
+    when full=True. Open and closed postings alike — classification tags,
+    it doesn't care whether the posting is still live."""
+    where_clause = "" if full else "WHERE p.classified_at IS NULL"
+    with conn.cursor() as cur:
+        cur.execute(
+            f"""
+            SELECT p.id, p.title, p.location, pv.description_raw
+            FROM postings p
+            LEFT JOIN LATERAL (
+                SELECT description_raw
+                FROM posting_versions
+                WHERE posting_id = p.id
+                ORDER BY observed_at DESC
+                LIMIT 1
+            ) pv ON true
+            {where_clause}
+            ORDER BY p.id
+            """
+        )
+        columns = [desc[0] for desc in cur.description]
+        return [dict(zip(columns, row, strict=True)) for row in cur.fetchall()]
+
+
+def bulk_update_classifications(
+    conn: psycopg.Connection, *, classifications: list[dict], commit: bool = True
+) -> int:
+    """Tag every posting's location_class/seniority_class/classified_at in
+    one multi-row UPDATE ... FROM (VALUES ...) per CHUNK_SIZE postings — not
+    one UPDATE per posting. Each dict needs: id, location_class,
+    seniority_class, classified_at. Never touches is_open or closed_at:
+    classification tags, it never closes or deletes a posting.
+    """
+    total = 0
+    for chunk in _chunked(classifications, CHUNK_SIZE):
+        values_sql = ", ".join(["(%s, %s, %s, %s)"] * len(chunk))
+        params: list[Any] = []
+        for c in chunk:
+            params.extend([c["id"], c["location_class"], c["seniority_class"], c["classified_at"]])
+
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                UPDATE postings AS p
+                SET location_class = v.location_class,
+                    seniority_class = v.seniority_class,
+                    classified_at = v.classified_at
+                FROM (VALUES {values_sql}) AS v(id, location_class, seniority_class, classified_at)
+                WHERE p.id = v.id::bigint
+                """,
+                params,
+            )
+            total += cur.rowcount
+        if commit:
+            conn.commit()
+    return total

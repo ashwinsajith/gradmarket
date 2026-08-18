@@ -1,22 +1,26 @@
-"""Runs the daily pipeline: ingest then parse, in one process.
+"""Runs the daily pipeline: ingest then parse then classify, in one process.
 
-Owns the healthcheck ping for both stages — ingest.py and parse_run.py stay
-independently runnable without pinging anything themselves. This exists
-because chaining them as separate commands (e.g. shell `&&`) lets ingest's
-own ping report success before parse has even run. Pinging only after both
-stages finish is the whole point of this module.
+Owns the healthcheck ping for all three stages — ingest.py, parse_run.py,
+and classify_run.py all stay independently runnable without pinging
+anything themselves. This exists because chaining them as separate commands
+(e.g. shell `&&`) lets an earlier stage's own ping report success before
+later stages have even run. Pinging only after every stage finishes is the
+whole point of this module.
 
-Fails (pings /fail, exits non-zero) if either stage raises, or if ingest
-completed with zero boards succeeding. A parse failure after a successful
-ingest still fails the run, but the log distinguishes the two: a collection
-gap is urgent and unrecoverable for that day, a parser bug is recoverable
-once fixed and the raw data it would have parsed is already safe in
-raw_fetches.
+Fails (pings /fail, exits non-zero) if any stage raises, or if ingest
+completed with zero boards succeeding. Stopping at the first raised
+exception mirrors shell `&&` semantics — later stages depend on data the
+earlier ones would have written, so there's no value in still attempting
+them. The log distinguishes failures by urgency: a collection gap (ingest)
+is the most urgent and unrecoverable for that day; a parser bug is
+recoverable once fixed, since the raw data it would have parsed is already
+safe in raw_fetches; a classifier bug is the least urgent of the three —
+classify/ is pure functions, re-run anytime, no data at risk at all.
 """
 
 from __future__ import annotations
 
-from gradmarket import health, ingest, parse_run
+from gradmarket import classify_run, health, ingest, parse_run
 
 
 def main() -> None:
@@ -47,6 +51,18 @@ def main() -> None:
         raise
 
     print(f"parse ok — {parse_summary['processed']} row(s) processed")
+
+    try:
+        classify_summary = classify_run.run()
+    except Exception as exc:
+        print(
+            f"PIPELINE FAILED: classify raised — least urgent of the three, "
+            f"nothing lost, rerun anytime: {exc}"
+        )
+        health.ping_healthcheck(failed=True)
+        raise
+
+    print(f"classify ok — {classify_summary['processed']} posting(s) classified")
 
     health.ping_healthcheck(failed=not ingest_ok)
 

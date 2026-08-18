@@ -7,11 +7,12 @@ student project, ships early October 2026.
 Deferred work (things noticed but not built) lives in [IDEAS.md](IDEAS.md).
 
 ## Commands
-- Scraper:  `python -m gradmarket.ingest`
-- Parser:   `python -m gradmarket.parse_run`
-- Pipeline: `python -m gradmarket.pipeline` (ingest then parse; owns the healthcheck ping for both — use this in production, not the two commands chained)
-- Tests:    `pytest`
-- Lint:     `ruff check .`
+- Scraper:    `python -m gradmarket.ingest`
+- Parser:     `python -m gradmarket.parse_run`
+- Classifier: `python -m gradmarket.classify_run`
+- Pipeline:   `python -m gradmarket.pipeline` (ingest, parse, classify, in order; owns the healthcheck ping for all three — use this in production, not the commands chained)
+- Tests:      `pytest`
+- Lint:       `ruff check .`
 
 ## Architecture
 Railway: Postgres + a cron service. Local dev connects via DATABASE_PUBLIC_URL; deployed services use the private
@@ -44,6 +45,13 @@ Postings are observed over time, not stored once:
   a single verbatim server response, and is a bare JSON array rather than a
   `{"jobs": [...]}` object like Greenhouse/Ashby. Both matter for the parsing
   layer.
+- `location_class`/`seniority_class`/`classified_at` tag a posting; they
+  never cause one to be closed or deleted. Classification is a separate pass
+  over `postings` (`classify_run.py`), same shape as parsing over
+  `raw_fetches` — idempotent via `classified_at IS NULL`, `--full` to
+  reclassify everything. The classifiers themselves (`gradmarket/classify/`)
+  are pure functions with no DB access, so tuning the rules never needs a
+  rebuild, just a re-run.
 
 ## Gotchas
 - A 200 response with an empty jobs array does NOT mean all jobs closed. It usually means the company switched ATS provider. Treating it as closure corrupts history for every posting they had. Handle empty-but-200 distinctly.

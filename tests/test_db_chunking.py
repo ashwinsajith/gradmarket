@@ -16,6 +16,7 @@ class FakeCursor:
     def __init__(self, conn):
         self.conn = conn
         self._last_params = []
+        self.rowcount = 0
 
     def __enter__(self):
         return self
@@ -26,6 +27,7 @@ class FakeCursor:
     def execute(self, sql, params):
         self.conn.calls.append(list(params))
         self._last_params = params
+        self.rowcount = len(params) // self.conn.row_width
 
     def fetchall(self):
         n = len(self._last_params) // self.conn.row_width
@@ -130,4 +132,37 @@ def test_bulk_append_posting_versions_empty_list_makes_no_calls():
     db.bulk_append_posting_versions(conn, versions=[])
 
     assert conn.calls == []
+    assert conn.commits == 0
+
+
+def test_bulk_update_classifications_chunks_at_1000_rows():
+    conn = FakeConn(row_width=4)
+    classifications = [
+        {"id": i, "location_class": "uk", "seniority_class": "early", "classified_at": "t0"}
+        for i in range(2500)
+    ]
+
+    total = db.bulk_update_classifications(conn, classifications=classifications)
+
+    assert [len(c) // 4 for c in conn.calls] == [1000, 1000, 500]
+    assert conn.commits == 3
+    assert total == 2500
+
+
+def test_bulk_update_classifications_empty_list_makes_no_calls():
+    conn = FakeConn(row_width=4)
+
+    total = db.bulk_update_classifications(conn, classifications=[])
+
+    assert total == 0
+    assert conn.calls == []
+    assert conn.commits == 0
+
+
+def test_bulk_update_classifications_respects_commit_false():
+    conn = FakeConn(row_width=4)
+    classifications = [{"id": 1, "location_class": "uk", "seniority_class": "early", "classified_at": "t0"}]
+
+    db.bulk_update_classifications(conn, classifications=classifications, commit=False)
+
     assert conn.commits == 0

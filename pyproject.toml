@@ -23,4 +23,5 @@ where = ["src"]
 [project.scripts]
 gradmarket-ingest = "gradmarket.ingest:main"
 gradmarket-parse = "gradmarket.parse_run:main"
+gradmarket-classify = "gradmarket.classify_run:main"
 gradmarket-pipeline = "gradmarket.pipeline:main"
