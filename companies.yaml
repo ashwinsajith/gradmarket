@@ -30,7 +30,6 @@ greenhouse:
   - janestreet
   - sumup
   - scaleai
-  - peak
   - duolingo
   - figma
   - elastic
@@ -89,7 +88,6 @@ ashby:
   - supabase
   - railway
   - render
-  - neon
   - clickhouse
   - posthog
   - confluent

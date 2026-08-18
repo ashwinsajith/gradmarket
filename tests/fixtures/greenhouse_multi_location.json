@@ -1,0 +1,29 @@
+{
+  "jobs": [
+    {
+      "id": 9001,
+      "title": "Area Vice President, Enterprise Sales",
+      "location": {"name": "New York, New York, USA; San Francisco, California, USA"},
+      "offices": [{"name": "New York"}, {"name": "San Francisco"}],
+      "absolute_url": "https://job-boards.greenhouse.io/example/jobs/9001",
+      "content": "<p>location.name already lists both offices — offices should not duplicate them.</p>"
+    },
+    {
+      "id": 9002,
+      "title": "Forward Deployed Engineer",
+      "location": {"name": "Hybrid"},
+      "offices": [{"name": "Austin, TX"}, {"name": "New York, NY"}],
+      "absolute_url": "https://job-boards.greenhouse.io/example/jobs/9002",
+      "content": "<p>location.name is vague — the real locations only appear in offices.</p>"
+    },
+    {
+      "id": 9003,
+      "title": "Single Office Role",
+      "location": {"name": "Paris, France"},
+      "offices": [{"name": "Paris"}],
+      "absolute_url": "https://job-boards.greenhouse.io/example/jobs/9003",
+      "content": "<p>Single consistent location — nothing extra to append.</p>"
+    }
+  ],
+  "meta": {"total": 3}
+}

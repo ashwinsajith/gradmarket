@@ -54,3 +54,24 @@ def test_extract_skips_job_missing_id():
     postings = ashby.extract(payload)
 
     assert postings == []
+
+
+# --- multi-location: location + secondaryLocations, verified against live data ---
+
+MULTI_LOCATION_PAYLOAD = json.loads((FIXTURES / "ashby_multi_location.json").read_text())
+
+
+def test_multi_location_combines_primary_and_secondary_in_order():
+    postings = {p.external_id: p for p in ashby.extract(MULTI_LOCATION_PAYLOAD)}
+
+    # matches the real Cohere case this was reported against: primary location
+    # first, then secondaryLocations in their given order — not just the primary.
+    assert postings["ml-staff-modeling-01"].location == (
+        "Toronto; London; Montreal; New York; Paris; San Francisco"
+    )
+
+
+def test_multi_location_no_secondary_locations_key_falls_back_to_primary_only():
+    postings = {p.external_id: p for p in ashby.extract(MULTI_LOCATION_PAYLOAD)}
+
+    assert postings["single-loc-role-02"].location == "London"

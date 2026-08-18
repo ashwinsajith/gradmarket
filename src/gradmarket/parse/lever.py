@@ -11,6 +11,19 @@ from typing import Any
 from gradmarket.parse.base import ParsedPosting, compute_content_hash
 
 
+def _combined_location(categories: dict) -> str | None:
+    """categories.allLocations already includes the primary location — a list
+    of plain strings, verified against live data, not assumed — so prefer it
+    over categories.location alone. Falls back to location for payloads
+    without allLocations."""
+    all_locations = categories.get("allLocations")
+    if all_locations:
+        deduped = list(dict.fromkeys(loc for loc in all_locations if loc))
+        if deduped:
+            return "; ".join(deduped)
+    return categories.get("location")
+
+
 def extract(payload: Any) -> list[ParsedPosting]:
     postings = []
     for job in payload:
@@ -21,7 +34,7 @@ def extract(payload: Any) -> list[ParsedPosting]:
 
         title = job.get("text")
         categories = job.get("categories") or {}
-        location = categories.get("location")
+        location = _combined_location(categories)
         department = categories.get("department") or categories.get("team")
         url = job.get("hostedUrl")
         description_raw = job.get("description")

@@ -7,6 +7,28 @@ from typing import Any
 from gradmarket.parse.base import ParsedPosting, compute_content_hash
 
 
+def _combined_location(job: dict) -> str | None:
+    """location is the primary location; secondaryLocations (a list of
+    {"location": ..., "address": ...} — verified against a live API response,
+    no "allLocations" field exists here) holds the rest. Dropping it means
+    every location but the first is lost for multi-location postings."""
+    parts: list[str] = []
+    seen: set[str] = set()
+
+    primary = job.get("location")
+    if primary:
+        parts.append(primary)
+        seen.add(primary.lower())
+
+    for entry in job.get("secondaryLocations") or []:
+        name = entry.get("location") if isinstance(entry, dict) else None
+        if name and name.lower() not in seen:
+            parts.append(name)
+            seen.add(name.lower())
+
+    return "; ".join(parts) if parts else None
+
+
 def extract(payload: Any) -> list[ParsedPosting]:
     postings = []
     for job in payload.get("jobs", []):
@@ -16,7 +38,7 @@ def extract(payload: Any) -> list[ParsedPosting]:
             continue
 
         title = job.get("title")
-        location = job.get("location")
+        location = _combined_location(job)
         department = job.get("department")
         url = job.get("jobUrl")
         description_raw = job.get("descriptionHtml") or job.get("descriptionPlain")

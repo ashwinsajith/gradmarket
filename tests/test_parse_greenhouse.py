@@ -54,3 +54,26 @@ def test_extract_skips_job_missing_id():
     postings = greenhouse.extract(payload)
 
     assert postings == []
+
+
+# --- multi-location: location.name and offices, verified against live data ---
+
+MULTI_LOCATION_PAYLOAD = json.loads((FIXTURES / "greenhouse_multi_location.json").read_text())
+
+
+def test_multi_location_offices_already_reflected_in_location_name_not_duplicated():
+    postings = {p.external_id: p for p in greenhouse.extract(MULTI_LOCATION_PAYLOAD)}
+
+    assert postings["9001"].location == "New York, New York, USA; San Francisco, California, USA"
+
+
+def test_multi_location_vague_location_name_gets_offices_appended():
+    postings = {p.external_id: p for p in greenhouse.extract(MULTI_LOCATION_PAYLOAD)}
+
+    assert postings["9002"].location == "Hybrid; Austin, TX; New York, NY"
+
+
+def test_multi_location_single_office_unchanged():
+    postings = {p.external_id: p for p in greenhouse.extract(MULTI_LOCATION_PAYLOAD)}
+
+    assert postings["9003"].location == "Paris, France"

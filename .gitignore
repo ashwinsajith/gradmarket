@@ -1,3 +1,11 @@
+# Scraped/derived data — job description text is the companies' copyright,
+# never commit it (see CLAUDE.md Constraints). data/eval/labels.csv is the
+# one exception: url + labels only, no company-owned content, safe to commit.
+/data/*
+!/data/eval/
+/data/eval/*
+!/data/eval/labels.csv
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]

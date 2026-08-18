@@ -62,3 +62,8 @@ Postings are observed over time, not stored once:
 - Type hints everywhere. Prefer boring, stable libraries.
 - Tests use recorded fixtures, never live HTTP calls.
 - Sources must be interchangeable. Each module in `sources/` exposes the same interface and returns a normalised shape. `ingest.py` must contain no provider-specific logic.
+
+## Long-running operations
+- Do not execute `parse_run --full`, full ingests, or anything expected to
+take more than ~60 seconds. Tell me the command and I'll run it myself.
+Polling a long operation wastes context for no benefit.

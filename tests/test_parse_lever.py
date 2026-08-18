@@ -50,3 +50,28 @@ def test_extract_skips_job_missing_id():
     postings = lever.extract(payload)
 
     assert postings == []
+
+
+# --- multi-location: categories.allLocations, verified against live data ---
+
+MULTI_LOCATION_PAYLOAD = json.loads((FIXTURES / "lever_multi_location.json").read_text())
+
+
+def test_multi_location_uses_all_locations_over_single_location():
+    postings = {p.external_id: p for p in lever.extract(MULTI_LOCATION_PAYLOAD)}
+
+    assert postings["lever-multi-001"].location == "London; Stockholm"
+
+
+def test_multi_location_single_entry_all_locations_matches_location():
+    postings = {p.external_id: p for p in lever.extract(MULTI_LOCATION_PAYLOAD)}
+
+    assert postings["lever-single-002"].location == "London"
+
+
+def test_falls_back_to_location_when_all_locations_missing():
+    payload = [{"id": "x", "text": "T", "categories": {"location": "Berlin"}}]
+
+    postings = lever.extract(payload)
+
+    assert postings[0].location == "Berlin"

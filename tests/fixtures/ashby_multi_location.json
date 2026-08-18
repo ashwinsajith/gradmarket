@@ -1,0 +1,48 @@
+{
+  "jobs": [
+    {
+      "id": "ml-staff-modeling-01",
+      "title": "Member of Technical Staff, Modeling",
+      "department": "Engineering",
+      "location": "Toronto",
+      "secondaryLocations": [
+        {
+          "location": "London",
+          "address": {"postalAddress": {"addressCountry": "United Kingdom"}}
+        },
+        {
+          "location": "Montreal",
+          "address": {"postalAddress": {"addressCountry": "Canada"}}
+        },
+        {
+          "location": "New York",
+          "address": {"postalAddress": {"addressCountry": "United States"}}
+        },
+        {
+          "location": "Paris",
+          "address": {"postalAddress": {"addressCountry": "France"}}
+        },
+        {
+          "location": "San Francisco",
+          "address": {"postalAddress": {"addressCountry": "United States"}}
+        }
+      ],
+      "isListed": true,
+      "isRemote": true,
+      "workplaceType": "Remote",
+      "jobUrl": "https://jobs.ashbyhq.com/example/ml-staff-modeling-01",
+      "applyUrl": "https://jobs.ashbyhq.com/example/ml-staff-modeling-01/application",
+      "descriptionHtml": "<p>Multi-location AI research role.</p>",
+      "descriptionPlain": "Multi-location AI research role."
+    },
+    {
+      "id": "single-loc-role-02",
+      "title": "Office Manager",
+      "department": "Operations",
+      "location": "London",
+      "jobUrl": "https://jobs.ashbyhq.com/example/single-loc-role-02",
+      "descriptionHtml": "<p>No secondaryLocations key at all.</p>"
+    }
+  ],
+  "apiVersion": "1"
+}
