@@ -264,6 +264,38 @@ def test_repeat_observation_same_content_updates_last_seen_no_new_version(fake_d
     assert len(fake_db.posting_versions) == 1
 
 
+def test_duplicate_external_id_in_payload_parses_without_error(fake_db, capsys):
+    # Two jobs sharing an id would make the multi-row upsert try to update
+    # the same row twice in one statement (CardinalityViolation: "ON
+    # CONFLICT DO UPDATE command cannot affect row a second time") against
+    # real Postgres. Any source could produce this, not just Lever's
+    # pagination-overlap case (fixed separately in lever.fetch()).
+    row = make_row(
+        1,
+        gh_payload(
+            [
+                gh_job(1, "Graduate Engineer (first)"),
+                gh_job(2, "Data Intern"),
+                gh_job(1, "Graduate Engineer (last)"),
+            ]
+        ),
+        T0,
+    )
+
+    process(fake_db, row)
+
+    # One posting for the duplicated id, keeping the last occurrence.
+    assert len(fake_db.postings) == 2
+    posting = fake_db.postings[("greenhouse", "acme", "1")]
+    assert posting["title"] == "Graduate Engineer (last)"
+    assert len(fake_db.posting_versions) == 2
+
+    out = capsys.readouterr().out
+    assert "duplicate external_id" in out
+    assert "greenhouse/acme" in out
+    assert "'1'" in out
+
+
 def test_content_change_appends_new_version_only_for_changed_posting(fake_db):
     process(fake_db, make_row(1, gh_payload([gh_job(1, "Graduate Engineer"), gh_job(2, "Data Intern")]), T0))
 

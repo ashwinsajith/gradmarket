@@ -8,6 +8,13 @@ api.eu.lever.co before being recorded as a permanent failure. Pagination is
 capped — a board that needs more than MAX_PAGES pages is more likely an API
 bug than a real board, so it's recorded as a failure rather than returning
 truncated data.
+
+skip/limit pagination re-reads the list by numeric offset on every page, so
+if the underlying list shifts between page requests (a job posted or removed
+while paginating — plausible given INTER_PAGE_SLEEP between pages), an item
+can cross the skip boundary and get read on two pages. fetch() deduplicates
+by id across pages before returning, so raw_fetches never stores the same
+job twice.
 """
 
 from __future__ import annotations
@@ -105,4 +112,24 @@ def fetch(token: str) -> FetchResult:
         all_jobs.extend(page)
         pages_fetched += 1
 
+    all_jobs = _deduplicate_jobs(all_jobs, token=token)
+
     return FetchResult(status_code=200, payload=all_jobs, job_count=len(all_jobs))
+
+
+def _deduplicate_jobs(jobs: list[dict], *, token: str) -> list[dict]:
+    """Keep the last occurrence of each id. Jobs without an id are left alone
+    (not collapsed together) — extract() already warns and skips those
+    individually; deduping them here by a shared None key would silently
+    drop all but one."""
+    with_id: dict[str, dict] = {}
+    without_id: list[dict] = []
+    for job in jobs:
+        job_id = job.get("id")
+        if job_id is None:
+            without_id.append(job)
+            continue
+        if job_id in with_id:
+            print(f"warning: lever/{token}: duplicate job id {job_id!r} across paginated pages, keeping last occurrence")
+        with_id[job_id] = job
+    return list(with_id.values()) + without_id

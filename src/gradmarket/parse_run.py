@@ -32,6 +32,22 @@ def _guard_tripped(current_count: int, previous_count: int | None) -> bool:
     return False
 
 
+def _deduplicate_postings(postings: list, *, source: str, company: str) -> list:
+    """Keep the last occurrence of each external_id. A payload with the same
+    id twice makes bulk_upsert_postings's multi-row UPSERT try to update the
+    same row twice in one statement (CardinalityViolation: "ON CONFLICT DO
+    UPDATE command cannot affect row a second time"). Any source could
+    produce this, so this guard is general — see lever.fetch()'s own
+    pagination-overlap dedup for one specific cause, already fixed upstream
+    of here, but not the only possible one."""
+    by_id: dict[str, Any] = {}
+    for p in postings:
+        if p.external_id in by_id:
+            print(f"WARNING: {source}/{company}: duplicate external_id {p.external_id!r} in payload, keeping last occurrence")
+        by_id[p.external_id] = p
+    return list(by_id.values())
+
+
 def process_row(conn: Any, row: dict, *, dry_run: bool = False) -> dict:
     """Process one raw_fetches row. Returns counts of what changed (or would
     change, under dry_run): inserted, updated, closed, versions."""
@@ -42,6 +58,7 @@ def process_row(conn: Any, row: dict, *, dry_run: bool = False) -> dict:
 
     extractor = EXTRACTORS[source]
     postings = extractor.extract(row["payload"])
+    postings = _deduplicate_postings(postings, source=source, company=company)
     current_ids = {p.external_id for p in postings}
 
     previous_payload = db.get_previous_raw_payload(conn, source=source, company=company, before=fetched_at)

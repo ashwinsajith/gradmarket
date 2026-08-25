@@ -87,6 +87,27 @@ def test_fetch_multi_page_pagination(monkeypatch):
     assert f"skip={lever.PAGE_LIMIT}" in calls[1]
 
 
+def test_fetch_deduplicates_job_appearing_on_two_pages(monkeypatch):
+    # skip/limit pagination re-reads by numeric offset; if the underlying
+    # list shifts while paginating (plausible given INTER_PAGE_SLEEP between
+    # pages), an item can cross the skip boundary and be read on two pages.
+    no_sleep(monkeypatch)
+    overlapping_job = {"id": "filler-99", "text": "Shifted Job (seen again on page 2)"}
+    page1 = FULL_PAGE
+    page2 = [overlapping_job] + JOBS_200
+    responses = [FakeResponse(200, page1), FakeResponse(200, page2)]
+    monkeypatch.setattr(requests, "get", lambda url, **k: responses.pop(0))
+
+    result = lever.fetch("shifting")
+
+    assert result.status_code == 200
+    ids = [job["id"] for job in result.payload]
+    assert len(ids) == len(set(ids))  # no id stored twice in the raw payload
+    assert result.job_count == lever.PAGE_LIMIT + 3  # not +4 — the overlap collapsed
+    # keeps the later page's version of the overlapping job
+    assert [job for job in result.payload if job["id"] == "filler-99"] == [overlapping_job]
+
+
 def test_fetch_pagination_cap_exceeded(monkeypatch):
     no_sleep(monkeypatch)
     calls = []
