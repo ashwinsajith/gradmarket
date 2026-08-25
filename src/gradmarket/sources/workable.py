@@ -15,6 +15,12 @@ silently starve it.
 Confirmed no pagination: ?page=2 and ?offset=100 both returned the exact same
 full job list on a 145-job board. Response sizes across several real boards
 (145, 125, 69, 7) don't clip at any round number either.
+
+Observed a 429 with Retry-After: 82392 (~22.9h) — this is a daily quota, not
+a short rate-limit window. Backoff can't outlast a day-long block, so a 429
+carrying a Retry-After beyond MAX_RETRY_AFTER_SECONDS skips retrying entirely
+rather than burning MAX_RETRIES attempts against a source that isn't coming
+back within this run.
 """
 
 from __future__ import annotations
@@ -36,9 +42,22 @@ BACKOFF_SECONDS = [1, 2, 4]
 # pacing) stalls a daily ingest run in retries; 5s is the practical floor.
 INTER_REQUEST_SLEEP = 5
 
+# "A few minutes" — a 429's Retry-After beyond this is treated as a quota
+# reset, not a short window worth backing off for (see module docstring).
+MAX_RETRY_AFTER_SECONDS = 300
+
 
 def is_transient(status_code: int) -> bool:
     return status_code == 429 or status_code >= 500
+
+
+def _parse_retry_after(value: str | None) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except ValueError:
+        return None
 
 
 def fetch(token: str) -> FetchResult:
@@ -63,13 +82,21 @@ def fetch(token: str) -> FetchResult:
             return FetchResult(status_code=200, payload=data, job_count=len(jobs))
 
         if is_transient(resp.status_code) and attempt < MAX_RETRIES:
-            wait = BACKOFF_SECONDS[attempt]
-            retry_after = resp.headers.get("Retry-After")
-            if retry_after is not None:
-                try:
-                    wait = float(retry_after)
-                except ValueError:
-                    pass
+            retry_after = _parse_retry_after(resp.headers.get("Retry-After"))
+
+            if resp.status_code == 429 and retry_after is not None and retry_after > MAX_RETRY_AFTER_SECONDS:
+                return FetchResult(
+                    status_code=429,
+                    payload=None,
+                    job_count=0,
+                    error=(
+                        f"rate limited, Retry-After={retry_after:.0f}s "
+                        f"(~{retry_after / 3600:.1f}h) — not retrying, exceeds "
+                        f"{MAX_RETRY_AFTER_SECONDS}s threshold"
+                    ),
+                )
+
+            wait = retry_after if retry_after is not None else BACKOFF_SECONDS[attempt]
             time.sleep(wait)
             continue
 

@@ -120,6 +120,45 @@ def test_fetch_429_exhausts_retries(monkeypatch):
     assert sleeps == workable.BACKOFF_SECONDS
 
 
+def test_fetch_429_long_retry_after_does_not_retry(monkeypatch):
+    # Observed live: Retry-After 82392s (~22.9h) — a daily quota, not a short
+    # window. Backoff can't outlast that, so give up on the first 429 rather
+    # than burning MAX_RETRIES attempts against a source that isn't coming
+    # back this run.
+    sleeps = no_sleep(monkeypatch)
+    calls = []
+    monkeypatch.setattr(
+        requests,
+        "get",
+        lambda *a, **k: calls.append(1) or FakeResponse(429, headers={"Retry-After": "82392"}),
+    )
+
+    result = workable.fetch("quota_blocked")
+
+    assert result.status_code == 429
+    assert result.payload is None
+    assert len(calls) == 1
+    assert sleeps == []
+    assert "82392" in result.error
+    assert "not retrying" in result.error
+
+
+def test_fetch_429_retry_after_at_threshold_still_retries(monkeypatch):
+    # "Longer than" the threshold skips retrying — exactly at it still
+    # retries normally.
+    sleeps = no_sleep(monkeypatch)
+    responses = [
+        FakeResponse(429, headers={"Retry-After": str(workable.MAX_RETRY_AFTER_SECONDS)}),
+        FakeResponse(200, JOBS_200),
+    ]
+    monkeypatch.setattr(requests, "get", lambda *a, **k: responses.pop(0))
+
+    result = workable.fetch("borderline")
+
+    assert result.status_code == 200
+    assert sleeps == [float(workable.MAX_RETRY_AFTER_SECONDS)]
+
+
 def test_fetch_5xx_exhausts_retries(monkeypatch):
     sleeps = no_sleep(monkeypatch)
     calls = []

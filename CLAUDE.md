@@ -65,6 +65,13 @@ Postings are observed over time, not stored once:
   currently fail this way. A zero-job account with a distinct name or a
   real description is treated as working, same as any other source's empty
   board.
+- Workable enforces a daily request quota, not a short rate-limit window —
+  observed a 429 with `Retry-After: 82392` (~22.9h). `scripts/check_tokens.py`
+  runs against the same quota as the daily collection ingest; a discovery run
+  against Workable costs a day of Workable data. `sources/workable.py`'s
+  `fetch()` gives up immediately on a 429 whose `Retry-After` exceeds
+  `MAX_RETRY_AFTER_SECONDS` rather than retrying — backoff can't outlast a
+  day-long block.
 - `location_class`/`seniority_class`/`classified_at` tag a posting; they
   never cause one to be closed or deleted. Classification is a separate pass
   over `postings` (`classify_run.py`), same shape as parsing over
