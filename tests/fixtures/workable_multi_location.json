@@ -1,0 +1,56 @@
+{
+  "name": "Example Co",
+  "description": "<p>We build things.</p>",
+  "jobs": [
+    {
+      "title": "Senior Platform Engineer",
+      "shortcode": "MULTI001",
+      "code": "",
+      "employment_type": "Full-time",
+      "telecommuting": true,
+      "department": "Engineering",
+      "url": "https://apply.workable.com/example/j/MULTI001",
+      "shortlink": "https://apply.workable.com/j/MULTI001",
+      "application_url": "https://apply.workable.com/j/MULTI001/apply",
+      "published_on": "2026-08-01",
+      "created_at": "2026-08-01",
+      "country": "United Kingdom",
+      "city": "London",
+      "state": "England",
+      "education": "",
+      "experience": "Mid-Senior level",
+      "function": "Engineering",
+      "industry": "Computer Software",
+      "locations": [
+        {"country": "United Kingdom", "countryCode": "GB", "city": "London", "region": "England", "hidden": false},
+        {"country": "United States", "countryCode": "US", "city": "New York", "region": "New York", "hidden": false},
+        {"country": "Canada", "countryCode": "CA", "city": "Toronto", "region": "Ontario", "hidden": true}
+      ],
+      "description": "<p>Synthetic multi-location example: no live posting with more than one locations entry was found during verification, but Workable's own docs confirm up to 6 locations per posting is a real, supported feature.</p>"
+    },
+    {
+      "title": "Single Office Role",
+      "shortcode": "SINGLE01",
+      "code": "",
+      "employment_type": "Full-time",
+      "telecommuting": false,
+      "department": "Operations",
+      "url": "https://apply.workable.com/example/j/SINGLE01",
+      "shortlink": "https://apply.workable.com/j/SINGLE01",
+      "application_url": "https://apply.workable.com/j/SINGLE01/apply",
+      "published_on": "2026-08-01",
+      "created_at": "2026-08-01",
+      "country": "United Kingdom",
+      "city": "London",
+      "state": "England",
+      "education": "",
+      "experience": "Associate",
+      "function": "Operations",
+      "industry": "Computer Software",
+      "locations": [
+        {"country": "United Kingdom", "countryCode": "GB", "city": "London", "region": "England", "hidden": false}
+      ],
+      "description": "<p>Single-location role for contrast.</p>"
+    }
+  ]
+}

@@ -1,9 +1,20 @@
-"""Ashby job board source.
+"""Workable job board source.
 
 Implements the gradmarket.sources interface: fetch(token) -> FetchResult.
-Verified against a live call: the response is {"jobs": [...], "apiVersion":
-"..."}, a single page with no pagination cursor, same envelope shape as
-Greenhouse.
+
+Verified against live calls before writing this: the real public endpoint is
+apply.workable.com/api/v1/widget/accounts/{token} — the {token}.workable.com/
+api/v3/... pattern people sometimes guess 404s everywhere it was tried.
+
+Always requests ?details=true. Without it, jobs come back with no
+description field at all (confirmed: same job, with and without the param,
+gains a "description" key only when it's present) — and the seniority
+classifier depends on description text, so an accidentally-bare fetch would
+silently starve it.
+
+Confirmed no pagination: ?page=2 and ?offset=100 both returned the exact same
+full job list on a 145-job board. Response sizes across several real boards
+(145, 125, 69, 7) don't clip at any round number either.
 """
 
 from __future__ import annotations
@@ -14,12 +25,16 @@ import requests
 
 from gradmarket.sources.base import FetchResult
 
-URL_TEMPLATE = "https://api.ashbyhq.com/posting-api/job-board/{token}"
+URL_TEMPLATE = "https://apply.workable.com/api/v1/widget/accounts/{token}?details=true"
 TIMEOUT = 30
 USER_AGENT = "gradmarket-ingest/0.1 (+https://github.com/ashwin-sajith/gradmarket)"
 MAX_RETRIES = 3
 BACKOFF_SECONDS = [1, 2, 4]
-INTER_REQUEST_SLEEP = 1
+
+# Workable rate-limits far more aggressively than Greenhouse, Lever or Ashby —
+# discovery hit 429s even at 3s between requests. 1s (the other sources'
+# pacing) stalls a daily ingest run in retries; 5s is the practical floor.
+INTER_REQUEST_SLEEP = 5
 
 
 def is_transient(status_code: int) -> bool:

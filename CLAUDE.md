@@ -1,8 +1,8 @@
 # GradMarket
 
 Daily collection of UK graduate and internship postings from company ATS
-boards (Greenhouse, Lever, Ashby). Semantic search over the results. Solo
-student project, ships early October 2026.
+boards (Greenhouse, Lever, Ashby, Workable). Semantic search over the
+results. Solo student project, ships early October 2026.
 
 Deferred work (things noticed but not built) lives in [IDEAS.md](IDEAS.md).
 
@@ -45,6 +45,26 @@ Postings are observed over time, not stored once:
   a single verbatim server response, and is a bare JSON array rather than a
   `{"jobs": [...]}` object like Greenhouse/Ashby. Both matter for the parsing
   layer.
+- Workable jobs have no `id` field at all — `shortcode` is the unique
+  identifier and is what `external_id` maps to for this source. Every other
+  source has an `id` field; a future refactor that assumes all sources do
+  will silently break Workable specifically.
+- Workable account slugs are NOT namespaced to real company identity, unlike
+  Greenhouse/Lever/Ashby tokens. `apply.workable.com/api/v1/widget/accounts/
+  notion` resolves to an unrelated small London agency, not the software
+  company. Verifying a Workable token can't lean on "the name matches the
+  company" the way it can for the other three sources.
+- A 200-with-zero-jobs Workable response is a real, resolved account, same
+  as the other three sources — a nonsense token 404s, it doesn't 200 with
+  zero jobs. (Earlier note here claimed the opposite — that zero jobs meant
+  a wrong/squatted account — which was wrong and has been corrected.)
+  `scripts/check_tokens.py`'s `--source workable` handling still separates
+  out a small "likely shell" bucket from zero-job accounts, but only when
+  BOTH the account name is token-identical (case-insensitive) AND the
+  account description is empty — e.g. `buffer`/`intercom`/`zapier`/`gitlab`
+  currently fail this way. A zero-job account with a distinct name or a
+  real description is treated as working, same as any other source's empty
+  board.
 - `location_class`/`seniority_class`/`classified_at` tag a posting; they
   never cause one to be closed or deleted. Classification is a separate pass
   over `postings` (`classify_run.py`), same shape as parsing over
@@ -69,7 +89,7 @@ Postings are observed over time, not stored once:
 ## Conventions
 - Type hints everywhere. Prefer boring, stable libraries.
 - Tests use recorded fixtures, never live HTTP calls.
-- Sources must be interchangeable. Each module in `sources/` exposes the same interface and returns a normalised shape. `ingest.py` must contain no provider-specific logic.
+- Sources must be interchangeable. Each module in `sources/` exposes the same interface (`fetch(token) -> FetchResult`, `INTER_REQUEST_SLEEP`) and returns a normalised shape. `ingest.py` must contain no provider-specific logic — it reads pacing from the module rather than applying one delay to every source, since Workable rate-limits far more aggressively than Greenhouse/Lever/Ashby (1s vs 5s).
 
 ## Long-running operations
 - Do not execute `parse_run --full`, full ingests, or anything expected to

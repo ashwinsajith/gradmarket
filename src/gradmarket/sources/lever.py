@@ -28,6 +28,7 @@ USER_AGENT = "gradmarket-ingest/0.1 (+https://github.com/ashwin-sajith/gradmarke
 MAX_RETRIES = 3
 BACKOFF_SECONDS = [1, 2, 4]
 INTER_PAGE_SLEEP = 1
+INTER_REQUEST_SLEEP = 1  # between companies, read by ingest.py — distinct from INTER_PAGE_SLEEP above
 
 
 def is_transient(status_code: int) -> bool:

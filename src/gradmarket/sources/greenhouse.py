@@ -1,8 +1,10 @@
 """Greenhouse job board source.
 
 Implements the gradmarket.sources interface: fetch(token) -> FetchResult.
-Rate-limit pacing between calls is the caller's responsibility (see
-ingest.py), not this module's.
+INTER_REQUEST_SLEEP declares this source's own pacing between calls; ingest.py
+reads it per-source rather than applying one delay to every source (Workable
+rate-limits far more aggressively — see its own module). Actually sleeping is
+still ingest.py's job, not this module's.
 """
 
 from __future__ import annotations
@@ -18,6 +20,7 @@ TIMEOUT = 30
 USER_AGENT = "gradmarket-ingest/0.1 (+https://github.com/ashwin-sajith/gradmarket)"
 MAX_RETRIES = 3
 BACKOFF_SECONDS = [1, 2, 4]
+INTER_REQUEST_SLEEP = 1
 
 
 def is_transient(status_code: int) -> bool:

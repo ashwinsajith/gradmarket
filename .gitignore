@@ -6,6 +6,10 @@
 /data/eval/*
 !/data/eval/labels.csv
 
+# scripts/check_tokens.py's per-run results state — recreated every run,
+# no source-of-truth value across commits.
+/scripts/check_tokens_results_*.csv
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
