@@ -66,6 +66,39 @@ def test_fetch_200_malformed_json(monkeypatch):
     assert result.error is not None
 
 
+def test_fetch_deduplicates_shortcode_appearing_twice_in_response(monkeypatch, capsys):
+    # Observed in production: instanda returned ED3D202D57 twice,
+    # universalquantum returned 290D8C2160 twice. Not a pagination artefact —
+    # Workable doesn't paginate — so this is a same-response duplicate.
+    no_sleep(monkeypatch)
+    payload = {
+        "name": "Instanda",
+        "description": "<p>We build things.</p>",
+        "jobs": [
+            {"shortcode": "ED3D202D57", "title": "Graduate Engineer (first)"},
+            {"shortcode": "290D8C2160", "title": "Data Analyst"},
+            {"shortcode": "ED3D202D57", "title": "Graduate Engineer (last)"},
+        ],
+    }
+    monkeypatch.setattr(requests, "get", lambda *a, **k: FakeResponse(200, payload))
+
+    result = workable.fetch("instanda")
+
+    assert result.status_code == 200
+    shortcodes = [job["shortcode"] for job in result.payload["jobs"]]
+    assert len(shortcodes) == len(set(shortcodes))  # no shortcode stored twice
+    assert result.job_count == 2  # not 3 — the duplicate collapsed
+
+    # keeps the later occurrence's version of the duplicated job
+    matching = [job for job in result.payload["jobs"] if job["shortcode"] == "ED3D202D57"]
+    assert matching == [{"shortcode": "ED3D202D57", "title": "Graduate Engineer (last)"}]
+
+    out = capsys.readouterr().out
+    assert "duplicate shortcode" in out
+    assert "ED3D202D57" in out
+    assert "instanda" in out
+
+
 def test_fetch_404_is_permanent(monkeypatch):
     no_sleep(monkeypatch)
     calls = []

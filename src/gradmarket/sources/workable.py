@@ -16,6 +16,15 @@ Confirmed no pagination: ?page=2 and ?offset=100 both returned the exact same
 full job list on a 145-job board. Response sizes across several real boards
 (145, 125, 69, 7) don't clip at any round number either.
 
+Observed in production: a single response can contain the same shortcode
+twice (instanda returned ED3D202D57 twice, universalquantum returned
+290D8C2160 twice) — not a pagination artefact, since Workable doesn't
+paginate (see above). This broke the parse layer's multi-row upsert with
+CardinalityViolation: ON CONFLICT DO UPDATE command cannot affect row a
+second time. fetch() deduplicates by shortcode before returning, so
+raw_fetches never stores the same job twice (see CLAUDE.md's data model
+notes — parse_run.process_row also deduplicates defensively for any source).
+
 Observed a 429 with Retry-After: 82392 (~22.9h) — this is a daily quota, not
 a short rate-limit window. Backoff can't outlast a day-long block, so a 429
 carrying a Retry-After beyond MAX_RETRY_AFTER_SECONDS skips retrying entirely
@@ -60,6 +69,27 @@ def _parse_retry_after(value: str | None) -> float | None:
         return None
 
 
+def _deduplicate_jobs(jobs: list[dict], *, token: str) -> list[dict]:
+    """Keep the last occurrence of each shortcode. Observed in production —
+    not a pagination artefact, since Workable doesn't paginate (see module
+    docstring): instanda returned ED3D202D57 twice, universalquantum
+    returned 290D8C2160 twice. Jobs without a shortcode are left alone (not
+    collapsed together) — extract() already warns and skips those
+    individually; deduping them here by a shared None key would silently
+    drop all but one."""
+    with_shortcode: dict[str, dict] = {}
+    without_shortcode: list[dict] = []
+    for job in jobs:
+        shortcode = job.get("shortcode")
+        if shortcode is None:
+            without_shortcode.append(job)
+            continue
+        if shortcode in with_shortcode:
+            print(f"warning: workable/{token}: duplicate shortcode {shortcode!r} in response, keeping last occurrence")
+        with_shortcode[shortcode] = job
+    return list(with_shortcode.values()) + without_shortcode
+
+
 def fetch(token: str) -> FetchResult:
     url = URL_TEMPLATE.format(token=token)
     headers = {"User-Agent": USER_AGENT}
@@ -78,7 +108,8 @@ def fetch(token: str) -> FetchResult:
                 data = resp.json()
             except ValueError as exc:
                 return FetchResult(status_code=200, payload=None, job_count=0, error=f"bad json: {exc}")
-            jobs = data.get("jobs", [])
+            jobs = _deduplicate_jobs(data.get("jobs", []), token=token)
+            data = {**data, "jobs": jobs}
             return FetchResult(status_code=200, payload=data, job_count=len(jobs))
 
         if is_transient(resp.status_code) and attempt < MAX_RETRIES:

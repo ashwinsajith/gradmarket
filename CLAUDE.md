@@ -72,6 +72,18 @@ Postings are observed over time, not stored once:
   `fetch()` gives up immediately on a 429 whose `Retry-After` exceeds
   `MAX_RETRY_AFTER_SECONDS` rather than retrying — backoff can't outlast a
   day-long block.
+- Workable payloads can contain the same `shortcode` twice within a single
+  response — observed in production (`instanda` returned `ED3D202D57` twice,
+  `universalquantum` returned `290D8C2160` twice). Not a pagination
+  artefact, since Workable doesn't paginate. This broke the parse layer's
+  multi-row upsert with `CardinalityViolation: ON CONFLICT DO UPDATE command
+  cannot affect row a second time`. Deduplication now happens in two layers:
+  `sources/workable.py` on fetch (keyed on `shortcode`), and
+  `parse_run.process_row` defensively for any source (keyed on
+  `external_id`) — both keep the last occurrence. Lever's `fetch()` also
+  deduplicates (its skip/limit pagination can in principle re-read an item
+  that shifted across a page boundary), but that one is precautionary — it's
+  never actually fired the way Workable's has.
 - `location_class`/`seniority_class`/`classified_at` tag a posting; they
   never cause one to be closed or deleted. Classification is a separate pass
   over `postings` (`classify_run.py`), same shape as parsing over
