@@ -19,6 +19,8 @@ b
 
 - Fast closures skew toward events and internships rather than full graduate schemes – GSA's early talent evening closed in 1 day, SumUp's Revenue Ops intern in 1. Plausible that capacity-limited events fill immediately while schemes run to deadline. Worth retesting with more data.
 
+- 9 Sep – skyscanner and sophos migrated ATS; ~120 postings appear as closures under the old source and new arrivals under the new one on this date. Artefact, not market movement.
+
 
 
 
