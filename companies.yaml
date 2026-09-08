@@ -66,6 +66,7 @@ greenhouse:
   - teneo
   - thoughtworks
   - unilever
+  - skyscanner
 
 lever:
   - zopa
@@ -82,6 +83,7 @@ lever:
   - numan
   - quantinuum
   - scottlogic
+  - sophos
 
 ashby:
   - freetrade
@@ -94,7 +96,6 @@ ashby:
   - wayve
   - faculty
   - deliveroo
-  - skyscanner
   - trainline
   - bumble
   - snyk
@@ -142,7 +143,6 @@ ashby:
   - oxa
   - quantexa
   - seccl
-  - sophos
   - sylvera
   - watershed
   - zilch
