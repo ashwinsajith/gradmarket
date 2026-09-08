@@ -21,6 +21,17 @@ Precedence order matters — checked top to bottom, first match wins:
      "new grads", "no prior experience", "final year",
      "penultimate year", "graduating in 20XX", CPT/OPT,
      "students eligible")                                    -> early
+
+     CPT/OPT matching is deliberately narrower than the other rule-6
+     phrases: it's case-sensitive on uppercase CPT/OPT only, and bare OPT
+     requires context ("CPT/OPT", "CPT or OPT", "OPT status", "on OPT").
+     Lowercase "opt" is ordinary English ("opt in", "opt out", "you may opt
+     to ...") and matched constantly in unrelated boilerplate — Faculty's
+     entire board (18 open UK postings, several senior) was misclassified
+     as early-careers this way because every posting's footer had an
+     "opt out of marketing communications" line. Bare CPT doesn't need
+     context since it isn't an English word and collision risk is low; bare
+     OPT does, since even all-caps "OPT OUT" shows up in all-caps footers.
   7. Otherwise                                                -> experienced
      (absence of evidence is not evidence of early)
 
@@ -68,12 +79,29 @@ EXPERIENCE_FLOOR_PATTERN = re.compile(r"\b(\d+)\+\s*years?\b", re.IGNORECASE)
 ZERO_TO_N_YEARS_PATTERN = re.compile(r"\b0\s*-\s*\d+\s*years?\b", re.IGNORECASE)
 
 EARLY_PHRASES_PATTERN = re.compile(
-    r"\b(new grads?|no prior experience|final year|penultimate year|cpt|opt|students eligible)\b",
+    r"\b(new grads?|no prior experience|final year|penultimate year|students eligible)\b",
     re.IGNORECASE,
 )
 
 # "graduating in 2026", "graduating in Spring 2026"
 GRADUATING_YEAR_PATTERN = re.compile(r"\bgraduating\s+in\s+(?:\w+\s+)?20\d{2}\b", re.IGNORECASE)
+
+# CPT/OPT (Curricular/Optional Practical Training) — US student work-authorization
+# terms that show up in eligibility text. Deliberately NOT re.IGNORECASE: lowercase
+# "opt" is an ordinary English word ("opt in", "opt out", "you may opt to ..."),
+# which matched on marketing-preference boilerplate that has nothing to do with
+# seniority. CPT is safe to match bare (uppercase, but on its own — it isn't an
+# English word). Bare OPT requires context, since even all-caps prose like
+# "OPT OUT of emails" would otherwise still collide.
+CPT_OPT_PATTERN = re.compile(
+    r"\bCPT\s*/\s*OPT\b"
+    r"|\bOPT\s*/\s*CPT\b"
+    r"|\bCPT\s+or\s+OPT\b"
+    r"|\bOPT\s+or\s+CPT\b"
+    r"|\bOPT\s+status\b"
+    r"|\bon\s+OPT\b"
+    r"|\bCPT\b"
+)
 
 
 def _has_experience_floor(description: str) -> bool:
@@ -85,6 +113,7 @@ def _has_early_evidence(description: str) -> bool:
         ZERO_TO_N_YEARS_PATTERN.search(description)
         or EARLY_PHRASES_PATTERN.search(description)
         or GRADUATING_YEAR_PATTERN.search(description)
+        or CPT_OPT_PATTERN.search(description)
     )
 
 

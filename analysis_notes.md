@@ -1,11 +1,10 @@
 # Analysis - Notes
 
 - Board list expanded 12 Aug (92→143) and 25 Aug (143→179); arrival counts on those dates are inflated by newly-observed rather than newly-posted roles.
-- Need to decide how to handle the fact that the board list keeps changing – the cleanest approach for the eventual writeup is restricting the time series to the 92 boards existing since 10 August, so the denominator is constant
-b
-- **Of 44 companies with 20+ open UK roles, 28 have zero early-careers postings. The 16 that do are led by quantitative trading firms: Jump Trading (50% of its UK roles), Squarepoint (29%), then Palantir (26%) and Faculty (25%). Companies students most target – Monzo, Anthropic, OpenAI, Stripe, Databricks, Graphcore (103 UK roles), Wayve (51), TCS (110) – post none.**
+- Need to decide how to handle the fact that the board list keeps changing – the cleanest approach for the eventual writeup is restricting the time series to the 92 boards existing since 10 August, so the denominator is constant.
+- **Of 43 companies with 20+ open UK roles, 26 have zero early-careers postings. The 17 that do are led by quantitative trading firms: Jump Trading (53% of its UK roles), Squarepoint (30%), Palantir (28%), then Man Group (14%), Point72 (13%) and DRW (12%). Companies students most target — Monzo, Anthropic, OpenAI, Stripe (2 of 43), Databricks, Graphcore (94 UK roles), Wayve (60), TCS (108) — post almost none.**
 
-- Of 110 UK early-careers postings inherited at collection start (first seen 10–12 Aug), 95 remain open and 15 have closed after ~3 weeks – roughly 14% attrition. Slow, consistent with a market running to fixed autumn deadlines rather than filling continuously.
+- 96 UK early-careers postings open, 122 seen since collection began on 10 Aug — roughly 21% closed over four weeks.
 
 - UK graduate roles do close within days in some cases – Scott Logic's graduate roles lasted 2 days, GSA's early talent event 1 day. That is a useful warning for students.
 
@@ -20,6 +19,10 @@ b
 - Fast closures skew toward events and internships rather than full graduate schemes – GSA's early talent evening closed in 1 day, SumUp's Revenue Ops intern in 1. Plausible that capacity-limited events fill immediately while schemes run to deadline. Worth retesting with more data.
 
 - 9 Sep – skyscanner and sophos migrated ATS; ~120 postings appear as closures under the old source and new arrivals under the new one on this date. Artefact, not market movement.
+
+- Classifier false-positive found in production, 9 Sep. The CPT/OPT rule matched the ordinary English word "opt", so any description containing "opt out of marketing communications" boilerplate was classified early-careers. This misclassified Faculty's entire board — 18 open UK roles including senior positions — and inflated the reported UK early-careers count by ~19% (119 → 96). Fixed by requiring uppercase CPT/OPT with context. Two similar risks logged but not fixed without evidence: "final year" can match contract timelines, "students eligible" can match benefits copy.
+
+- The 50-posting holdout reported 100% precision on early-careers. It missed this error entirely because no board in the sample carried opt-out boilerplate. A held-out sample validates against the distribution it was drawn from; systematic errors concentrated in one employer's template can be invisible to it. Production monitoring found what evaluation didn't.
 
 
 

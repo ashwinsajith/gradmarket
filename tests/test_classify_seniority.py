@@ -245,11 +245,51 @@ def test_rule6_graduating_in_month_year():
 
 
 def test_rule6_cpt():
+    # Bare CPT (uppercase) is enough on its own — it isn't an English word,
+    # so there's no realistic prose collision the way there is for "opt".
     assert classify_seniority("Software Engineer", "CPT accepted") == "early"
 
 
-def test_rule6_opt():
-    assert classify_seniority("Software Engineer", "OPT accepted") == "early"
+def test_rule6_cpt_slash_opt():
+    assert classify_seniority("Software Engineer", "We accept students eligible for CPT/OPT") == "early"
+
+
+def test_rule6_opt_status_context():
+    assert classify_seniority("Software Engineer", "Must be able to maintain OPT status") == "early"
+
+
+def test_rule6_on_opt_context():
+    assert classify_seniority("Software Engineer", "Open to candidates on OPT") == "early"
+
+
+def test_rule6_bare_opt_without_context_does_not_match():
+    # Bare uppercase OPT alone is deliberately not enough — even all-caps
+    # boilerplate ("OPT OUT of these emails") can produce it without any
+    # connection to work authorization. Context is required.
+    assert classify_seniority("Software Engineer", "OPT accepted") == "experienced"
+
+
+def test_lowercase_opt_in_ordinary_prose_does_not_match():
+    assert classify_seniority("Software Engineer", "You may opt out of marketing communications") == "experienced"
+
+
+def test_lowercase_opt_to_does_not_match():
+    assert classify_seniority(
+        "Research Scientist - AI Safety", "You may opt to receive updates about our research."
+    ) == "experienced"
+
+
+def test_faculty_style_boilerplate_does_not_misclassify_senior_role():
+    # Representative of the real bug: a senior/experienced title paired with
+    # a footer containing ordinary "opt out" boilerplate must not flip to
+    # early just because the description contains the word "opt".
+    description = (
+        "We're looking for an experienced researcher to join our AI safety team. "
+        "5+ years of experience in machine learning research required.\n\n"
+        "By applying, you consent to being contacted about this role. "
+        "You may opt out of future marketing communications at any time."
+    )
+    assert classify_seniority("Research Scientist - AI Safety", description) == "experienced"
 
 
 def test_rule6_students_eligible():

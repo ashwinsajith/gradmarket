@@ -12,3 +12,17 @@ Parking lot for things deliberately deferred. Capturing, not committing.
 
 ## Coverage
 - Insurance and consultancies are thin. Most UK-native fintech (Starling, Wise, Revolut, Thought Machine) is on Workday or bespoke ATSes — unreachable via Greenhouse/Lever/Ashby. State as a sampling limitation in the write-up rather than solving.
+
+## Classification
+- Two more rule-6 early-evidence phrases in `classify/seniority.py` can match
+  ordinary prose unrelated to the candidate's own status, same class of bug
+  as the CPT/OPT fix: "final year" matches "the final year of this
+  fixed-term contract/grant/lease" (describing the role's or business's
+  timeline, not a student's degree); "students eligible" matches benefits
+  copy like "students eligible for this scholarship benefit" (an employee's
+  dependents, not the applicant). Both need a real false-positive posting to
+  calibrate a context requirement against — unlike CPT/OPT, there's no
+  known misclassified board yet, so tightening blind risks new false
+  negatives. "no prior experience" has a milder version of the same risk
+  ("no prior experience with our internal tools is assumed") but reads far
+  less risky in practice.
