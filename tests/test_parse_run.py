@@ -456,6 +456,30 @@ def test_run_skips_failed_fetches_without_payload(fake_db):
     assert fake_db.raw_fetches_history[0]["parsed_at"] is not None
 
 
+def test_unsupported_source_row_is_skipped_without_raising_and_left_unparsed(fake_db, capsys):
+    # Workday rows exist in raw_fetches (ingest.py fetches it) but there's no
+    # registered extractor yet — process_row must not KeyError on EXTRACTORS
+    # and abort the whole run; it must skip just this row and keep going.
+    fake_db.raw_fetches_history.append(
+        make_row(1, [{"title": "Some Job"}], T0, source="workday", company="iberdrola")
+    )
+    fake_db.raw_fetches_history.append(make_row(2, gh_payload([gh_job(1, "A")]), T0))
+
+    summary = parse_run.run()
+
+    assert summary["processed"] == 1  # only the greenhouse row
+    assert summary["skipped_unsupported_source"] == 1
+    assert len(fake_db.postings) == 1  # nothing created for the unsupported row
+    assert fake_db.postings[("greenhouse", "acme", "1")]["is_open"] is True
+
+    workday_row = next(r for r in fake_db.raw_fetches_history if r["source"] == "workday")
+    assert workday_row["parsed_at"] is None  # left unparsed, so a future run retries it
+
+    out = capsys.readouterr().out
+    assert "no extractor registered" in out
+    assert "workday/iberdrola" in out
+
+
 # --- dry_run ---
 
 

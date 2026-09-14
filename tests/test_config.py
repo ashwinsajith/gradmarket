@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from gradmarket import config
+from gradmarket.sources.workday import WorkdayToken
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
@@ -48,3 +49,27 @@ def test_load_companies_empty_file_returns_empty_dict(tmp_path):
     empty.write_text("")
 
     assert config.load_companies(empty) == {}
+
+
+def test_load_companies_converts_workday_entries_to_workday_tokens():
+    companies = config.load_companies(FIXTURES / "companies_workday_test.yaml")
+
+    assert companies == {
+        "workday": [WorkdayToken(company="example", tenant="example", dc="wd503", site="External")]
+    }
+
+
+def test_load_companies_leaves_other_sources_as_bare_strings_alongside_workday(tmp_path):
+    mixed = tmp_path / "companies.yaml"
+    mixed.write_text(
+        "greenhouse:\n  - acme\nworkday:\n  - company: livenation\n    tenant: livenation\n"
+        "    dc: wd503\n    site: livenationcareers\n"
+    )
+
+    companies = config.load_companies(mixed)
+
+    assert companies["greenhouse"] == ["acme"]
+    assert isinstance(companies["greenhouse"][0], str)
+    assert companies["workday"] == [
+        WorkdayToken(company="livenation", tenant="livenation", dc="wd503", site="livenationcareers")
+    ]

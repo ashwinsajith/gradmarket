@@ -24,6 +24,8 @@
 
 - The 50-posting holdout reported 100% precision on early-careers. It missed this error entirely because no board in the sample carried opt-out boilerplate. A held-out sample validates against the distribution it was drawn from; systematic errors concentrated in one employer's template can be invisible to it. Production monitoring found what evaluation didn't.
 
+- Three ATS migrations in five weeks (Skyscanner, Sophos, Sage), two of which left the four platforms entirely. That's roughly 2% of the sampling frame churning per month, and it's a real constraint on any longitudinal claim.
+
 
 
 

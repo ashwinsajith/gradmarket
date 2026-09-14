@@ -47,11 +47,16 @@ def run() -> tuple[int, int]:
 
     for i, (source_name, token) in enumerate(jobs_to_fetch):
         attempted += 1
+        # str(token) is the company identity slug for every source — a bare
+        # token already is that string, and gradmarket.sources.workday.
+        # WorkdayToken defines __str__ to return its .company. Keeps this
+        # loop free of any provider-specific branching.
+        company = str(token)
 
         if source_name in tripped:
-            db.insert_raw_fetch(conn, source=source_name, company=token, http_status=None, payload=None)
+            db.insert_raw_fetch(conn, source=source_name, company=company, http_status=None, payload=None)
             failed += 1
-            print(f"{source_name}/{token}: SKIPPED ({source_name} circuit breaker tripped this run)")
+            print(f"{source_name}/{company}: SKIPPED ({source_name} circuit breaker tripped this run)")
             continue
 
         result = SOURCES[source_name].fetch(token)
@@ -59,7 +64,7 @@ def run() -> tuple[int, int]:
         db.insert_raw_fetch(
             conn,
             source=source_name,
-            company=token,
+            company=company,
             http_status=result.status_code,
             payload=result.payload,
         )
@@ -68,11 +73,11 @@ def run() -> tuple[int, int]:
             succeeded += 1
             total_jobs += result.job_count
             consecutive_429s[source_name] = 0
-            print(f"{source_name}/{token}: {result.status_code} ({result.job_count} jobs)")
+            print(f"{source_name}/{company}: {result.status_code} ({result.job_count} jobs)")
         else:
             failed += 1
             detail = result.error or str(result.status_code)
-            print(f"{source_name}/{token}: FAILED ({detail})")
+            print(f"{source_name}/{company}: FAILED ({detail})")
 
             if result.status_code == 429:
                 consecutive_429s[source_name] = consecutive_429s.get(source_name, 0) + 1

@@ -6,11 +6,12 @@ module, so sources stay interchangeable.
 
 from __future__ import annotations
 
-from gradmarket.sources import ashby, greenhouse, lever, workable
+from gradmarket.sources import ashby, greenhouse, lever, workable, workday
 
 SOURCES = {
     "greenhouse": greenhouse,
     "lever": lever,
     "ashby": ashby,
     "workable": workable,
+    "workday": workday,
 }

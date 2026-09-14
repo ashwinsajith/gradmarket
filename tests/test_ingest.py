@@ -9,10 +9,10 @@ from gradmarket.sources.base import FetchResult
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
 
-def test_sources_registry_includes_all_four_with_no_ingest_changes():
+def test_sources_registry_includes_all_five_with_no_ingest_changes():
     """New sources register themselves in gradmarket.sources; ingest.py never
     needs touching to pick them up — that's the interchangeability contract."""
-    assert set(ingest.SOURCES) == {"greenhouse", "lever", "ashby", "workable"}
+    assert set(ingest.SOURCES) == {"greenhouse", "lever", "ashby", "workable", "workday"}
 
 
 FAKE_RESULTS = {
@@ -85,12 +85,13 @@ def test_run_returns_attempted_and_succeeded_counts(monkeypatch):
 
 
 def test_source_modules_declare_their_own_inter_request_sleep():
-    from gradmarket.sources import ashby, greenhouse, lever, workable
+    from gradmarket.sources import ashby, greenhouse, lever, workable, workday
 
     assert greenhouse.INTER_REQUEST_SLEEP == 1
     assert lever.INTER_REQUEST_SLEEP == 1
     assert ashby.INTER_REQUEST_SLEEP == 1
     assert workable.INTER_REQUEST_SLEEP == 5
+    assert workday.INTER_REQUEST_SLEEP == 1
 
 
 def test_run_sleeps_using_each_sources_own_inter_request_sleep(monkeypatch):
@@ -116,6 +117,35 @@ def test_run_sleeps_using_each_sources_own_inter_request_sleep(monkeypatch):
 
     # greenhouse: g1, g2 (sleep 1 each); workable: w1 (sleep 5), w2 (last, no sleep).
     assert sleeps == [1, 1, 5]
+
+
+def test_workday_structured_token_writes_company_slug_not_the_token_object(monkeypatch):
+    # WorkdayToken isn't a bare string like every other source's token — the
+    # identity slug for raw_fetches.company is token.company, surfaced via
+    # __str__ so this loop needs no Workday-specific branch to get it right.
+    monkeypatch.setenv("COMPANIES_FILE", str(FIXTURES / "companies_workday_test.yaml"))
+    monkeypatch.setattr(
+        ingest,
+        "SOURCES",
+        {
+            "workday": SimpleNamespace(
+                fetch=lambda token: FetchResult(status_code=200, payload=[{"title": "Job"}], job_count=1),
+                INTER_REQUEST_SLEEP=0,
+            )
+        },
+    )
+    monkeypatch.setattr(ingest.time, "sleep", lambda s: None)
+    monkeypatch.setattr(db, "get_connection", lambda: SimpleNamespace(close=lambda: None))
+    monkeypatch.setattr(db, "init_schema", lambda conn: None)
+
+    inserted = []
+    monkeypatch.setattr(db, "insert_raw_fetch", lambda conn, **kw: inserted.append(kw))
+
+    ingest.main()
+
+    assert len(inserted) == 1
+    assert inserted[0]["company"] == "example"
+    assert isinstance(inserted[0]["company"], str)
 
 
 def test_circuit_breaker_skips_remaining_tokens_after_consecutive_429s(monkeypatch):

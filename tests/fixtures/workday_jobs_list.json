@@ -1,0 +1,26 @@
+{
+  "total": 3,
+  "jobPostings": [
+    {
+      "title": "Graduate Software Engineer",
+      "externalPath": "/job/London-GB/Graduate-Software-Engineer_JR0001",
+      "locationsText": "London, UK",
+      "postedOn": "Posted 3 Days Ago",
+      "bulletFields": ["JR0001"]
+    },
+    {
+      "title": "Data Science Intern",
+      "externalPath": "/job/London-GB/Data-Science-Intern_JR0002",
+      "locationsText": "London, UK",
+      "postedOn": "Posted Today",
+      "bulletFields": ["JR0002"]
+    },
+    {
+      "title": "Finance Graduate Programme",
+      "externalPath": "/job/London-GB/Finance-Graduate-Programme_JR0003",
+      "locationsText": "London, UK",
+      "postedOn": "Posted 10 Days Ago",
+      "bulletFields": ["JR0003"]
+    }
+  ]
+}

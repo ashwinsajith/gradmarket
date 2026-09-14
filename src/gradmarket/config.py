@@ -8,8 +8,13 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import Any
 
 import yaml
+
+from gradmarket.sources.workday import WorkdayToken
+
+CompanyToken = str | WorkdayToken
 
 
 def resolve_companies_file() -> Path:
@@ -21,6 +26,19 @@ def resolve_companies_file() -> Path:
     return path
 
 
-def load_companies(path: Path) -> dict[str, list[str]]:
+def _build_token(source_name: str, entry: Any) -> CompanyToken:
+    """Every source's companies.yaml entries are a bare string token, except
+    Workday's — it needs three coordinates (tenant/dc/site) instead of one,
+    so its entries are objects, not strings (see CLAUDE.md's data model
+    notes). This is the one place that difference gets resolved; every
+    reader downstream (ingest.py included) just gets back whichever token
+    type the source actually uses, with no branching of its own."""
+    if source_name == "workday":
+        return WorkdayToken(**entry)
+    return entry
+
+
+def load_companies(path: Path) -> dict[str, list[CompanyToken]]:
     with path.open() as f:
-        return yaml.safe_load(f) or {}
+        raw = yaml.safe_load(f) or {}
+    return {source_name: [_build_token(source_name, entry) for entry in entries] for source_name, entries in raw.items()}

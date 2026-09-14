@@ -159,12 +159,26 @@ def run(*, full: bool = False, dry_run: bool = False) -> dict:
 
     processed = 0
     skipped_failures = 0
+    skipped_unsupported_source = 0
     totals = {"inserted": 0, "updated": 0, "closed": 0, "versions": 0}
 
     for row in rows:
         if row["payload"] is None:
             db.mark_raw_fetch_parsed(conn, row["id"], commit=not dry_run)
             skipped_failures += 1
+            continue
+        if row["source"] not in EXTRACTORS:
+            # No registered extractor for this source (e.g. Workday, whose
+            # extractor needs an interface change not built yet — see
+            # parse/workday.py). Leave parsed_at unset so this row is
+            # retried automatically once one is registered, rather than
+            # requiring a --full rebuild. Must not raise: one unsupported
+            # source's rows must not abort parsing for every other source.
+            print(
+                f"WARNING: {row['source']}/{row['company']}: no extractor registered for this source — "
+                f"leaving raw_fetches row {row['id']} unparsed"
+            )
+            skipped_unsupported_source += 1
             continue
         stats = process_row(conn, row, dry_run=dry_run)
         for key in totals:
@@ -180,6 +194,7 @@ def run(*, full: bool = False, dry_run: bool = False) -> dict:
     return {
         "processed": processed,
         "skipped_failures": skipped_failures,
+        "skipped_unsupported_source": skipped_unsupported_source,
         "total_rows": len(rows),
         "dry_run": dry_run,
         "postings_inserted": totals["inserted"],
@@ -211,6 +226,11 @@ def main() -> None:
     summary = run(full=args.full, dry_run=args.dry_run)
     prefix = "[dry run] " if args.dry_run else ""
     print(f"{prefix}Parsed {summary['processed']} row(s), skipped {summary['skipped_failures']} failed fetch(es).")
+    if summary["skipped_unsupported_source"]:
+        print(
+            f"{prefix}skipped {summary['skipped_unsupported_source']} row(s) with no registered "
+            f"extractor for their source — left unparsed for a future run"
+        )
     print(
         f"{prefix}postings: {summary['postings_inserted']} inserted, "
         f"{summary['postings_updated']} updated, {summary['postings_closed']} closed"

@@ -1,0 +1,20 @@
+{
+  "jobPostingInfo": {
+    "id": "JR0001",
+    "title": "Graduate Software Engineer",
+    "jobDescription": "<p>Join our engineering team as a graduate software engineer.</p>",
+    "location": "London, UK",
+    "postedOn": "Posted 3 Days Ago",
+    "startDate": "2026-09-14",
+    "timeType": "Full time",
+    "jobReqId": "JR0001",
+    "externalUrl": "https://example.wd503.myworkdayjobs.com/en-US/example/job/London-GB/Graduate-Software-Engineer_JR0001",
+    "videoInfo": {
+      "videoUrl": "https://cdn.workday.com/video/abc123?token=eyJhbGciOi.rotates.daily&expires=1757894400",
+      "thumbnailUrl": "https://cdn.workday.com/video/abc123/thumb?token=eyJhbGciOi.rotates.daily&expires=1757894400"
+    }
+  },
+  "hiringOrganization": {
+    "name": "Example Co"
+  }
+}

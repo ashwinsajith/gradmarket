@@ -44,6 +44,18 @@ DROP INDEX IF EXISTS raw_fetches_company_fetched_at_idx;
 CREATE INDEX IF NOT EXISTS raw_fetches_source_company_fetched_at_idx
     ON raw_fetches (source, company, fetched_at);
 
+CREATE TABLE IF NOT EXISTS raw_details (
+    id BIGSERIAL PRIMARY KEY,
+    fetched_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    source TEXT NOT NULL,
+    company TEXT NOT NULL,
+    external_id TEXT NOT NULL,
+    http_status INT,
+    payload JSONB,
+    UNIQUE (source, company, external_id)
+);
+CREATE INDEX IF NOT EXISTS raw_details_source_company_idx ON raw_details (source, company);
+
 CREATE TABLE IF NOT EXISTS postings (
     id BIGSERIAL PRIMARY KEY,
     source TEXT NOT NULL,
@@ -112,6 +124,78 @@ def insert_raw_fetch(
         row_id = cur.fetchone()[0]
     conn.commit()
     return row_id
+
+
+def insert_raw_detail(
+    conn: psycopg.Connection,
+    *,
+    source: str,
+    company: str,
+    external_id: str,
+    http_status: int | None,
+    payload: Any | None,
+) -> int | None:
+    """Insert one posting's detail-fetch result. ON CONFLICT DO NOTHING on
+    (source, company, external_id): details are fetched once per posting,
+    not per run (see raw_details' unique constraint in SCHEMA) — a repeat
+    attempt at the same key (e.g. two overlapping detail_run.py invocations)
+    is silently skipped rather than crashing on a UniqueViolation. Returns
+    the new row's id, or None if a row for this key already existed."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO raw_details (source, company, external_id, http_status, payload)
+            VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT (source, company, external_id) DO NOTHING
+            RETURNING id
+            """,
+            (source, company, external_id, http_status, Jsonb(payload) if payload is not None else None),
+        )
+        row = cur.fetchone()
+    conn.commit()
+    return row[0] if row else None
+
+
+def get_postings_missing_detail(conn: psycopg.Connection, *, source: str) -> list[dict]:
+    """Every list-payload item for `source` that has no raw_details row yet,
+    read from only the most recent raw_fetches row per company (the current
+    board state), not the full history.
+
+    external_id is derived here exactly as gradmarket.parse.workday._external_id
+    does it — bulletFields[0] when present, externalPath otherwise — the two
+    are kept deliberately in sync since they express the same identity rule
+    over the same payload shape; a change to one without the other would
+    silently desync which postings this considers "already fetched".
+
+    Returns [{"company", "external_id", "external_path"}, ...].
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            WITH latest_fetch AS (
+                SELECT DISTINCT ON (company) company, payload
+                FROM raw_fetches
+                WHERE source = %s AND payload IS NOT NULL
+                ORDER BY company, fetched_at DESC
+            ),
+            list_items AS (
+                SELECT
+                    company,
+                    COALESCE(item->'bulletFields'->>0, item->>'externalPath') AS external_id,
+                    item->>'externalPath' AS external_path
+                FROM latest_fetch, jsonb_array_elements(payload) AS item
+            )
+            SELECT li.company, li.external_id, li.external_path
+            FROM list_items li
+            LEFT JOIN raw_details rd
+                ON rd.source = %s AND rd.company = li.company AND rd.external_id = li.external_id
+            WHERE rd.id IS NULL AND li.external_id IS NOT NULL
+            ORDER BY li.company, li.external_id
+            """,
+            (source, source),
+        )
+        columns = [desc[0] for desc in cur.description]
+        return [dict(zip(columns, row, strict=True)) for row in cur.fetchall()]
 
 
 def get_unparsed_raw_fetches(conn: psycopg.Connection) -> list[dict]:

@@ -84,6 +84,12 @@ Postings are observed over time, not stored once:
   deduplicates (its skip/limit pagination can in principle re-read an item
   that shifted across a page boundary), but that one is precautionary — it's
   never actually fired the way Workable's has.
+- A Workday board can be multi-employer — the tenant/dc/site in
+  companies.yaml identify who *hosts* the board, not necessarily who's
+  hiring for every posting on it. For this source, `company` means "board
+  owner", not "employer", unlike Greenhouse/Lever/Ashby/Workable where the
+  two are the same thing. A future feature that assumes `company` always
+  equals the hiring employer will be wrong specifically for Workday.
 - `location_class`/`seniority_class`/`classified_at` tag a posting; they
   never cause one to be closed or deleted. Classification is a separate pass
   over `postings` (`classify_run.py`), same shape as parsing over
