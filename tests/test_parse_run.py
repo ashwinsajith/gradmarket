@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from gradmarket import parse_run
+from gradmarket.parse.greenhouse import extract as gh_extract
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 T0 = datetime(2026, 1, 1, tzinfo=UTC)
@@ -58,6 +59,10 @@ class FakeDB:
         self.raw_fetches_history: list[dict] = []
         self._next_id = 1
         self._snapshot = None
+        # Controllable by tests directly — this FakeDB doesn't simulate the
+        # real JSONB "is this row stripped" detection, just the count
+        # parse_run.py's --full guard reacts to.
+        self.stripped_raw_fetches_count = 0
 
     # --- connection / transaction control ---
 
@@ -66,6 +71,9 @@ class FakeDB:
 
     def close(self):
         pass
+
+    def count_stripped_raw_fetches(self, conn):
+        return self.stripped_raw_fetches_count
 
     def commit(self):
         self._snapshot = None
@@ -106,6 +114,16 @@ class FakeDB:
         for r in self.raw_fetches_history:
             if r["id"] == raw_fetch_id:
                 r["parsed_at"] = "parsed"
+                break
+        if commit:
+            self.commit()
+
+    def update_raw_fetch_payload(self, conn, raw_fetch_id, payload, *, commit=True):
+        if not commit:
+            self._ensure_snapshot()
+        for r in self.raw_fetches_history:
+            if r["id"] == raw_fetch_id:
+                r["payload"] = payload
                 break
         if commit:
             self.commit()
@@ -408,6 +426,61 @@ def test_closed_at_is_written_once_not_overwritten(fake_db):
     assert posting["is_open"] is True
 
 
+# --- description stripping from raw_fetches after a successful parse ---
+
+
+def test_description_stripped_after_successful_parse(fake_db):
+    row = make_row(1, gh_payload([gh_job(1, "A", content="<p>full description</p>")]), T0)
+
+    process(fake_db, row)
+
+    stored = fake_db.raw_fetches_history[0]
+    assert stored["payload"]["jobs"][0]["content"] is None
+    # everything else preserved
+    assert stored["payload"]["jobs"][0]["id"] == 1
+    assert stored["payload"]["jobs"][0]["title"] == "A"
+    # posting_versions already holds the real text — nothing lost
+    assert fake_db.posting_versions[0]["description_raw"] == "<p>full description</p>"
+
+
+def test_description_not_stripped_under_dry_run(fake_db):
+    row = make_row(1, gh_payload([gh_job(1, "A", content="<p>desc</p>")]), T0)
+    fake_db.raw_fetches_history.append(row)
+
+    parse_run.run(dry_run=True)
+
+    stored = fake_db.raw_fetches_history[0]
+    assert stored["payload"]["jobs"][0]["content"] == "<p>desc</p>"
+
+
+def test_description_not_stripped_if_parse_raised(fake_db, monkeypatch):
+    row = make_row(1, gh_payload([gh_job(1, "A", content="<p>desc</p>")]), T0)
+    fake_db.raw_fetches_history.append(row)
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated failure")
+
+    monkeypatch.setattr(fake_db, "close_missing_postings", boom)
+
+    with pytest.raises(RuntimeError, match="simulated failure"):
+        parse_run.process_row(fake_db, row)
+
+    assert row["payload"]["jobs"][0]["content"] == "<p>desc</p>"
+    assert row["parsed_at"] is None
+
+
+def test_stripped_row_still_yields_same_external_id_set_through_extractor(fake_db):
+    row = make_row(1, gh_payload([gh_job(1, "A"), gh_job(2, "B")]), T0)
+    original_payload = copy.deepcopy(row["payload"])
+
+    process(fake_db, row)
+
+    stored_payload = fake_db.raw_fetches_history[0]["payload"]
+    before_ids = {p.external_id for p in gh_extract(original_payload)}
+    after_ids = {p.external_id for p in gh_extract(stored_payload)}
+    assert before_ids == after_ids == {"1", "2"}
+
+
 # --- run() orchestration: idempotency, --full, failed-fetch handling ---
 
 
@@ -441,6 +514,63 @@ def test_run_full_wipes_and_reprocesses_everything(fake_db):
     assert posting["is_open"] is True
     assert posting["closed_at"] is None
     assert len(fake_db.posting_versions) == 1  # rebuilt fresh, not appended on top of stale state
+
+
+# --- --full's destructive-rebuild guard ---
+
+
+def test_full_refuses_when_descriptions_have_been_stripped(fake_db):
+    process(fake_db, make_row(1, gh_payload([gh_job(1, "A")]), T0))
+    fake_db.stripped_raw_fetches_count = 3
+
+    with pytest.raises(parse_run.DestructiveFullRebuildRefused, match="3"):
+        parse_run.run(full=True)
+
+    # nothing was touched — the guard fires before reset_parsed_state runs
+    posting = fake_db.postings[("greenhouse", "acme", "1")]
+    assert posting["is_open"] is True
+    assert len(fake_db.posting_versions) == 1
+
+
+def test_full_override_proceeds_and_warns(fake_db, capsys):
+    process(fake_db, make_row(1, gh_payload([gh_job(1, "A")]), T0))
+    fake_db.stripped_raw_fetches_count = 3
+    fake_db.postings[("greenhouse", "acme", "1")]["is_open"] = False
+    fake_db.postings[("greenhouse", "acme", "1")]["closed_at"] = T0
+
+    summary = parse_run.run(full=True, i_know_this_destroys_history=True)
+
+    assert summary["processed"] == 1
+    posting = fake_db.postings[("greenhouse", "acme", "1")]
+    assert posting["is_open"] is True  # rebuild actually ran
+    assert posting["closed_at"] is None
+
+    out = capsys.readouterr().out
+    assert "3 raw_fetches row(s)" in out
+    assert "i-know-this-destroys-history" in out or "i_know_this_destroys_history" in out
+
+
+def test_full_works_normally_when_nothing_has_been_stripped(fake_db):
+    process(fake_db, make_row(1, gh_payload([gh_job(1, "A")]), T0))
+    assert fake_db.stripped_raw_fetches_count == 0  # default
+
+    summary = parse_run.run(full=True)  # no override needed
+
+    assert summary["processed"] == 1
+    assert len(fake_db.postings) == 1
+
+
+def test_full_dry_run_bypasses_the_guard_even_with_stripped_rows(fake_db):
+    # TRUNCATE participates in the transaction like any other write here —
+    # a dry-run --full is rolled back and never actually destroys anything,
+    # so there's nothing for the guard to protect against.
+    process(fake_db, make_row(1, gh_payload([gh_job(1, "A")]), T0))
+    fake_db.stripped_raw_fetches_count = 5
+
+    summary = parse_run.run(full=True, dry_run=True)
+
+    assert summary["dry_run"] is True
+    assert summary["processed"] == 1
 
 
 def test_run_skips_failed_fetches_without_payload(fake_db):

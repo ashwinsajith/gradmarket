@@ -10,11 +10,13 @@ a collection gap is not.
 from __future__ import annotations
 
 import argparse
+import sys
 from typing import Any
 
 from gradmarket import db
 from gradmarket.config import load_companies, resolve_companies_file
 from gradmarket.parse import EXTRACTORS
+from gradmarket.raw_fetches_pruning import strip_descriptions
 
 # Empty feeds always trip the guard. A shrink of more than this ratio only
 # trips it when the previous count was at least SHRINK_GUARD_MIN_PREVIOUS —
@@ -22,6 +24,11 @@ from gradmarket.parse import EXTRACTORS
 # guarding it would mean never detecting genuine closures on small boards.
 SHRINK_GUARD_RATIO = 0.5
 SHRINK_GUARD_MIN_PREVIOUS = 10
+
+
+class DestructiveFullRebuildRefused(RuntimeError):
+    """Raised by run() when --full would destroy already-pruned description
+    history and --i-know-this-destroys-history wasn't passed."""
 
 
 def _guard_tripped(current_count: int, previous_count: int | None) -> bool:
@@ -50,7 +57,25 @@ def _deduplicate_postings(postings: list, *, source: str, company: str) -> list:
 
 def process_row(conn: Any, row: dict, *, dry_run: bool = False) -> dict:
     """Process one raw_fetches row. Returns counts of what changed (or would
-    change, under dry_run): inserted, updated, closed, versions."""
+    change, under dry_run): inserted, updated, closed, versions.
+
+    Once this row's postings/versions are upserted and it's marked parsed,
+    description text is stripped from its own raw_fetches.payload (reusing
+    gradmarket.raw_fetches_pruning.strip_descriptions — see CLAUDE.md) —
+    posting_versions.description_raw already holds that text and appends a
+    new version whenever it changes, so keeping a second full copy in
+    raw_fetches once a row is parsed is pure duplication, and it's most of
+    why raw_fetches grows the way it does. This happens unconditionally
+    (not just for old rows the way scripts/prune_raw_fetches.py's manual
+    pass does), and only for rows that reach this point:
+      - it's the LAST thing this function does, after every write for this
+        row has already committed (commit=commit, same as everything
+        above) — never strip before a row's own parse has succeeded, and
+        if anything above raises, this line is simply never reached.
+      - it's skipped entirely under dry_run — nothing this function does
+        under dry_run is meant to persist, and stripping would be a real,
+        unconditional write with no corresponding rollback-safe read path.
+    """
     source = row["source"]
     company = row["company"]
     fetched_at = row["fetched_at"]
@@ -111,6 +136,11 @@ def process_row(conn: Any, row: dict, *, dry_run: bool = False) -> dict:
 
     db.mark_raw_fetch_parsed(conn, row["id"], commit=commit)
 
+    if not dry_run:
+        stripped_payload, changed = strip_descriptions(row["payload"], source)
+        if changed:
+            db.update_raw_fetch_payload(conn, row["id"], stripped_payload, commit=commit)
+
     return {"inserted": inserted, "updated": updated, "closed": closed, "versions": len(changed_versions)}
 
 
@@ -143,14 +173,37 @@ def _reconcile_orphaned_companies(conn: Any, *, dry_run: bool = False) -> tuple[
     return reconciled_companies, total_closed
 
 
-def run(*, full: bool = False, dry_run: bool = False) -> dict:
+def run(*, full: bool = False, dry_run: bool = False, i_know_this_destroys_history: bool = False) -> dict:
     """dry_run runs all the same SQL — including schema setup, which always
     commits, since the tables have to exist for any of this to work — but
     every write after that stays uncommitted and gets rolled back at the end.
     Nothing is persisted; the returned counts describe what would have
-    changed."""
+    changed.
+
+    full+dry_run skips the destructive-rebuild guard below: TRUNCATE
+    participates in the transaction like any other write here, so a dry-run
+    --full is rolled back same as everything else and never actually
+    destroys anything (see reset_parsed_state's own docstring)."""
     conn = db.get_connection()
     db.init_schema(conn)
+
+    if full and not dry_run:
+        stripped_count = db.count_stripped_raw_fetches(conn)
+        if stripped_count > 0:
+            if not i_know_this_destroys_history:
+                conn.close()
+                raise DestructiveFullRebuildRefused(
+                    f"Refusing --full: {stripped_count} raw_fetches row(s) have had descriptions "
+                    "stripped (scripts/prune_raw_fetches.py). --full truncates posting_versions "
+                    "before rebuilding it from raw_fetches, which would destroy the only "
+                    "surviving copy of description history for those rows — irrecoverably. "
+                    "Re-run with --i-know-this-destroys-history to proceed anyway."
+                )
+            print(
+                f"WARNING: proceeding with --full despite {stripped_count} raw_fetches row(s) "
+                "with stripped descriptions — --i-know-this-destroys-history was passed. "
+                "Description history for those rows will not survive this rebuild."
+            )
 
     if full:
         db.reset_parsed_state(conn, commit=not dry_run)
@@ -218,12 +271,25 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Run the same SQL but roll back at the end; print what would change without persisting anything",
     )
+    parser.add_argument(
+        "--i-know-this-destroys-history",
+        action="store_true",
+        help=(
+            "Override --full's refusal to run when raw_fetches rows have had descriptions "
+            "stripped (scripts/prune_raw_fetches.py) — proceeding destroys posting_versions' "
+            "only surviving copy of that description history, irrecoverably"
+        ),
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    summary = run(full=args.full, dry_run=args.dry_run)
+    try:
+        summary = run(full=args.full, dry_run=args.dry_run, i_know_this_destroys_history=args.i_know_this_destroys_history)
+    except DestructiveFullRebuildRefused as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
     prefix = "[dry run] " if args.dry_run else ""
     print(f"{prefix}Parsed {summary['processed']} row(s), skipped {summary['skipped_failures']} failed fetch(es).")
     if summary["skipped_unsupported_source"]:

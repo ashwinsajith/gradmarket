@@ -15,6 +15,8 @@ import psycopg
 from dotenv import load_dotenv
 from psycopg.types.json import Jsonb
 
+from gradmarket.raw_fetches_pruning import DESCRIPTION_FIELDS
+
 load_dotenv()
 
 # Postgres caps a single query at ~65535 parameters. bulk_upsert_postings uses
@@ -198,6 +200,60 @@ def get_postings_missing_detail(conn: psycopg.Connection, *, source: str) -> lis
         return [dict(zip(columns, row, strict=True)) for row in cur.fetchall()]
 
 
+_STRIPPED_JOBS_ARRAY_EXPR = """
+    CASE
+        WHEN jsonb_typeof(payload) = 'array' THEN payload
+        WHEN jsonb_typeof(payload -> 'jobs') = 'array' THEN payload -> 'jobs'
+        ELSE '[]'::jsonb
+    END
+"""
+
+
+def count_stripped_raw_fetches(conn: psycopg.Connection) -> int:
+    """How many raw_fetches rows show the signature scripts/prune_raw_fetches.py
+    leaves behind: at least one job whose description field is explicitly
+    JSON null (present as a key, not merely absent) rather than real text.
+    Real ATS responses don't send null for these fields — they omit the key
+    or send an empty string — so in practice this signature is unambiguous
+    evidence of a prior prune, not a false positive from an originally-empty
+    description.
+
+    Backs parse_run.py's --full guard (see CLAUDE.md): --full truncates
+    posting_versions before rebuilding it from raw_fetches, which would
+    permanently destroy description history for any row this counts.
+
+    Field names come from gradmarket.raw_fetches_pruning.DESCRIPTION_FIELDS
+    — kept deliberately in sync with what the prune script actually strips,
+    same caveat as get_postings_missing_detail's external_id derivation
+    above: a change to one without the other would silently defeat this
+    guard. The CASE above picks the right array shape (Lever's bare array
+    vs. everyone else's {"jobs": [...]}) from the payload's own runtime
+    type rather than trusting `source`, so a mismatched or malformed row
+    can't make jsonb_array_elements error out.
+    """
+    total = 0
+    with conn.cursor() as cur:
+        for source, fields in DESCRIPTION_FIELDS.items():
+            field_clause = " OR ".join("(job ? %s AND job -> %s = 'null'::jsonb)" for _ in fields)
+            params: list[Any] = [source]
+            for field in fields:
+                params.extend([field, field])
+
+            cur.execute(
+                f"""
+                SELECT count(*) FROM raw_fetches
+                WHERE source = %s AND payload IS NOT NULL
+                  AND EXISTS (
+                      SELECT 1 FROM jsonb_array_elements({_STRIPPED_JOBS_ARRAY_EXPR}) AS job
+                      WHERE {field_clause}
+                  )
+                """,
+                params,
+            )
+            total += cur.fetchone()[0]
+    return total
+
+
 def get_unparsed_raw_fetches(conn: psycopg.Connection) -> list[dict]:
     with conn.cursor() as cur:
         cur.execute(
@@ -216,6 +272,18 @@ def get_unparsed_raw_fetches(conn: psycopg.Connection) -> list[dict]:
 def mark_raw_fetch_parsed(conn: psycopg.Connection, raw_fetch_id: int, *, commit: bool = True) -> None:
     with conn.cursor() as cur:
         cur.execute("UPDATE raw_fetches SET parsed_at = now() WHERE id = %s", (raw_fetch_id,))
+    if commit:
+        conn.commit()
+
+
+def update_raw_fetch_payload(conn: psycopg.Connection, raw_fetch_id: int, payload: Any, *, commit: bool = True) -> None:
+    """Overwrite one raw_fetches row's payload in place. Used by
+    parse_run.process_row to strip description text immediately after that
+    row's own parse has succeeded — see CLAUDE.md: once a row is parsed,
+    posting_versions.description_raw is the durable copy of its description
+    history, so raw_fetches keeping a second full copy is pure duplication."""
+    with conn.cursor() as cur:
+        cur.execute("UPDATE raw_fetches SET payload = %s WHERE id = %s", (Jsonb(payload), raw_fetch_id))
     if commit:
         conn.commit()
 

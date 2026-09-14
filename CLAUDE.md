@@ -97,6 +97,34 @@ Postings are observed over time, not stored once:
   reclassify everything. The classifiers themselves (`gradmarket/classify/`)
   are pure functions with no DB access, so tuning the rules never needs a
   rebuild, just a re-run.
+- `raw_fetches.payload` retains description text only for rows that haven't
+  been parsed yet. `parse_run.process_row` strips it (via
+  `gradmarket.raw_fetches_pruning.strip_descriptions`) as the last thing it
+  does for a row, immediately after that row's own postings/versions have
+  been upserted and committed — job ids, titles, locations, and the
+  payload's array/object structure are all preserved, only description
+  fields are set to null. `posting_versions.description_raw` is the durable
+  copy from then on, appending a new version whenever the text changes;
+  keeping a second full copy in `raw_fetches` past that point was pure
+  duplication and most of why the table grew the way it did. Stripping is
+  skipped under `--dry-run` (nothing dry-run does is meant to persist) and
+  never happens if that row's own parse raised — it's the literal last
+  statement in `process_row`, so a failure anywhere above it is never
+  reached. `scripts/prune_raw_fetches.py` still exists for one-time backlog
+  cleanup of rows parsed *before* this stripping existed; it isn't the
+  primary mechanism going forward.
+- This makes `parse_run --full` destructive, not just incomplete, for
+  essentially every row in a normally-operating database: `--full`
+  `TRUNCATE`s `posting_versions` *before* rebuilding it from `raw_fetches`,
+  and by the time `--full` runs, most rows have already had their
+  descriptions stripped by the point above — so their only surviving
+  full-description copy is deleted by the truncate, and nothing in the now
+  description-less `raw_fetches` can rebuild it. The text is gone,
+  permanently, not just "not reconstructed". `parse_run.py`'s `--full`
+  refuses to run when any row shows this signature
+  (`db.count_stripped_raw_fetches`) unless passed
+  `--i-know-this-destroys-history` — never pass that flag without exporting
+  anything description-dependent (e.g. embeddings) first.
 
 ## Gotchas
 - A 200 response with an empty jobs array does NOT mean all jobs closed. It usually means the company switched ATS provider. Treating it as closure corrupts history for every posting they had. Handle empty-but-200 distinctly.
