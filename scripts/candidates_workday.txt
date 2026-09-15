@@ -1,0 +1,10 @@
+# One candidate per line: company,tenant,dc,site
+#
+# - company: the identity slug to use in companies.yaml (board owner, not
+#   necessarily the hiring employer — see CLAUDE.md's data model notes)
+# - tenant, dc, site: the three coordinates of the Workday board itself,
+#   e.g. https://{tenant}.{dc}.myworkdayjobs.com/en-US/{site}
+#
+# Example (already confirmed working, already in companies.yaml):
+# iberdrola,iberdrola,wd3,Iberdrola
+

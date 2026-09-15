@@ -14,6 +14,8 @@ if str(SCRIPTS_DIR) not in sys.path:
 
 import check_tokens
 
+from gradmarket.sources.workday import WorkdayToken
+
 
 def test_case_only_name_difference_is_not_evidence_of_real():
     # "differs from the token by more than case" — same string modulo case
@@ -43,3 +45,62 @@ def test_both_fail_is_likely_shell():
 
 def test_both_pass_is_not_likely_shell():
     assert check_tokens.workable_likely_shell("buffer", "Buffer Inc", "<p>Real company.</p>") is False
+
+
+# --- workday: company,tenant,dc,site candidates ---
+
+
+def test_read_workday_candidates_parses_four_fields(tmp_path):
+    path = tmp_path / "candidates_workday.txt"
+    path.write_text("iberdrola,iberdrola,wd3,Iberdrola\nlivenation,livenation,wd503,LiveNationCareers\n")
+
+    candidates = check_tokens.read_workday_candidates(path)
+
+    assert candidates == [
+        WorkdayToken(company="iberdrola", tenant="iberdrola", dc="wd3", site="Iberdrola"),
+        WorkdayToken(company="livenation", tenant="livenation", dc="wd503", site="LiveNationCareers"),
+    ]
+
+
+def test_read_workday_candidates_skips_blank_lines_and_comments(tmp_path):
+    path = tmp_path / "candidates_workday.txt"
+    path.write_text("# a comment\n\niberdrola,iberdrola,wd3,Iberdrola\n")
+
+    candidates = check_tokens.read_workday_candidates(path)
+
+    assert candidates == [WorkdayToken(company="iberdrola", tenant="iberdrola", dc="wd3", site="Iberdrola")]
+
+
+def test_read_workday_candidates_skips_malformed_lines_with_warning(tmp_path, capsys):
+    path = tmp_path / "candidates_workday.txt"
+    path.write_text("iberdrola,iberdrola,wd3\niberdrola,iberdrola,wd3,Iberdrola\niberdrola,,wd3,Iberdrola\n")
+
+    candidates = check_tokens.read_workday_candidates(path)
+
+    assert candidates == [WorkdayToken(company="iberdrola", tenant="iberdrola", dc="wd3", site="Iberdrola")]
+    err = capsys.readouterr().err
+    assert err.count("skipping malformed line") == 2
+
+
+def test_workday_sample_formats_title_and_location():
+    payload = [
+        {"title": "Graduate Software Engineer", "locationsText": "London, UK"},
+        {"title": "Data Analyst", "locationsText": "Remote"},
+    ]
+
+    assert check_tokens.workday_sample(payload) == [
+        "Graduate Software Engineer — London, UK",
+        "Data Analyst — Remote",
+    ]
+
+
+def test_workday_sample_caps_at_sample_size():
+    payload = [{"title": f"Job {i}", "locationsText": "London"} for i in range(10)]
+
+    sample = check_tokens.workday_sample(payload)
+
+    assert len(sample) == check_tokens.SAMPLE_SIZE
+
+
+def test_workday_sample_handles_missing_fields():
+    assert check_tokens.workday_sample([{}]) == ["? — ?"]
