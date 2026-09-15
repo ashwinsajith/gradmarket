@@ -6,6 +6,11 @@ from typing import Any
 
 from gradmarket.parse.base import ParsedPosting, compute_content_hash
 
+# Ashby's raw_fetches payload alone is enough to extract a full
+# ParsedPosting — no second-stage detail fetch needed (see NEEDS_DETAILS in
+# parse/base.py and contrast with parse/workday.py).
+NEEDS_DETAILS = False
+
 
 def _combined_location(job: dict) -> str | None:
     """location is the primary location; secondaryLocations (a list of

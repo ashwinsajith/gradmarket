@@ -10,6 +10,11 @@ from typing import Any
 
 from gradmarket.parse.base import ParsedPosting, compute_content_hash
 
+# Lever's raw_fetches payload alone is enough to extract a full
+# ParsedPosting — no second-stage detail fetch needed (see NEEDS_DETAILS in
+# parse/base.py and contrast with parse/workday.py).
+NEEDS_DETAILS = False
+
 
 def _combined_location(categories: dict) -> str | None:
     """categories.allLocations already includes the primary location — a list

@@ -200,6 +200,20 @@ def get_postings_missing_detail(conn: psycopg.Connection, *, source: str) -> lis
         return [dict(zip(columns, row, strict=True)) for row in cur.fetchall()]
 
 
+def get_raw_details_by_external_id(conn: psycopg.Connection, *, source: str, company: str) -> dict[str, Any]:
+    """{external_id: payload} for every raw_details row on record for this
+    company. Backs a two-stage extractor's context (see parse.base.
+    ExtractorContext / NEEDS_DETAILS) — an external_id with no entry here
+    means its detail hasn't been fetched yet, which the extractor itself
+    handles (see e.g. parse/workday.py), not this function."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT external_id, payload FROM raw_details WHERE source = %s AND company = %s",
+            (source, company),
+        )
+        return dict(cur.fetchall())
+
+
 _STRIPPED_JOBS_ARRAY_EXPR = """
     CASE
         WHEN jsonb_typeof(payload) = 'array' THEN payload

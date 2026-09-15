@@ -90,6 +90,18 @@ Postings are observed over time, not stored once:
   owner", not "employer", unlike Greenhouse/Lever/Ashby/Workable where the
   two are the same thing. A future feature that assumes `company` always
   equals the hiring employer will be wrong specifically for Workday.
+- `WorkdayToken` being a structured object rather than a bare string has bitten
+  reconciliation once already: `parse_run._configured_source_companies()` built
+  its configured set from raw companies.yaml tokens directly, so a
+  `WorkdayToken` never equality-matched the plain string
+  `db.get_open_source_companies()` returns for the same company. Every
+  configured Workday company read as "orphaned" and got closed —
+  `workday/iberdrola`'s 221 postings were closed in production this way, in a
+  single run, immediately after being created. Fixed by using `str(token)`
+  when building the configured set, same as `ingest.py` already does for
+  `raw_fetches.company`. Any future code that compares a companies.yaml token
+  against a plain company-identity string needs the same `str()` normalisation
+  — never compare a raw token to a string directly.
 - `location_class`/`seniority_class`/`classified_at` tag a posting; they
   never cause one to be closed or deleted. Classification is a separate pass
   over `postings` (`classify_run.py`), same shape as parsing over
@@ -154,6 +166,19 @@ Postings are observed over time, not stored once:
 - A 200 response with an empty jobs array does NOT mean all jobs closed. It usually means the company switched ATS provider. Treating it as closure corrupts history for every posting they had. Handle empty-but-200 distinctly.
 - Greenhouse returns descriptions as HTML. Strip before embedding.
 - A company migrating between ATS providers appears as two identities, since identity includes `source`. The same job will look closed on the old board and newly-posted on the new one, producing a false close and a false first_seen_at. Not handled yet — needs a merge rule once we have a second source.
+- `pipeline.py` runs `detail_run` between `parse_run` and `classify_run` so a
+  brand-new Workday posting gets a chance at its description before
+  classification sees it — but within a single cycle, `parse_run` has
+  already run by the time `detail_run` fetches that new posting's detail,
+  so the freshly-fetched text doesn't reach `posting_versions` until a
+  *later* day's parse pass re-reads a fresh raw_fetches row for it. A new
+  Workday posting's very first classification can therefore happen with
+  `description_raw = None`, and since classification only happens once
+  (`classified_at IS NULL`), that first pass is never automatically redone
+  once the real description lands a day or two later. Accepted, not fixed:
+  Workday is one company today, and `classify_run --full` (pure functions,
+  rerun anytime) already fixes it for free — see pipeline.py's own
+  docstring for the full reasoning.
 
 ## Constraints
 - Job description text is the companies' copyright. Store privately, never
@@ -167,6 +192,21 @@ Postings are observed over time, not stored once:
 - Type hints everywhere. Prefer boring, stable libraries.
 - Tests use recorded fixtures, never live HTTP calls.
 - Sources must be interchangeable. Each module in `sources/` exposes the same interface (`fetch(token) -> FetchResult`, `INTER_REQUEST_SLEEP`) and returns a normalised shape. `ingest.py` must contain no provider-specific logic — it reads pacing from the module rather than applying one delay to every source, since Workable rate-limits far more aggressively than Greenhouse/Lever/Ashby (1s vs 5s).
+- Extractors must be interchangeable too, with one declared exception. Every
+  module in `parse/` exposes `extract(payload) -> list[ParsedPosting]` and a
+  module-level `NEEDS_DETAILS: bool` — `False` for Greenhouse/Lever/Ashby/
+  Workable, whose raw_fetches payload alone is enough. `NEEDS_DETAILS = True`
+  (currently only Workday) means the source is two-stage — its extractor's
+  real signature is `extract(payload, context)`, where `context` is a
+  `parse.base.ExtractorContext` (`details_by_external_id` from
+  `db.get_raw_details_by_external_id`, plus that company's companies.yaml
+  token). `parse_run.process_row` reads the flag to decide which call shape
+  to use — it never branches on source name — and only builds a context at
+  all when `NEEDS_DETAILS` is true, so the other four sources never pay for
+  an unused `raw_details` query or companies.yaml load. The shrink guard's
+  own re-extraction of the *previous* raw payload goes through the same
+  context-aware path, for the same reason: a two-stage extractor can't take
+  a bare payload at all, guard comparison included.
 
 ## Long-running operations
 - Do not execute `parse_run --full`, full ingests, or anything expected to

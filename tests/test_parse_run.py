@@ -13,7 +13,7 @@ from gradmarket.parse.greenhouse import extract as gh_extract
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 # Anchored to real "now", not a fixed historical date: run()'s automatic
 # retention sweep deletes parsed rows older than RAW_FETCHES_RETENTION_DAYS
-# (7) by wall-clock time, and every test below that calls run() (not just
+# (30) by wall-clock time, and every test below that calls run() (not just
 # the retention-specific ones) would otherwise have its fixture rows
 # deleted out from under it the moment they're parsed, since a fixed past
 # T0 only drifts further outside the window as real time passes.
@@ -32,6 +32,23 @@ def gh_job(job_id, title, location="London, UK", content="<p>desc</p>"):
         "absolute_url": f"https://boards.greenhouse.io/example/jobs/{job_id}",
         "content": content,
     }
+
+
+def wd_item(external_id, title, external_path=None):
+    """One Workday list-payload item — raw_fetches.payload for this source
+    is a bare list of these, not wrapped in {"jobs": [...]}."""
+    return {
+        "title": title,
+        "externalPath": external_path or f"/job/{external_id}",
+        "bulletFields": [external_id],
+    }
+
+
+def wd_detail_payload(description="<p>desc</p>", location="Edinburgh", country="United Kingdom"):
+    info = {"jobDescription": description, "location": location}
+    if country:
+        info["country"] = {"descriptor": country}
+    return {"jobPostingInfo": info}
 
 
 def make_row(row_id, payload, fetched_at, *, source="greenhouse", company="acme", parsed_at=None):
@@ -71,6 +88,9 @@ class FakeDB:
         # parse_run.py's --full guard reacts to.
         self.stripped_raw_fetches_count = 0
         self.vacuum_calls = 0
+        # {(source, company, external_id): payload} — seeded directly by
+        # tests that need a two-stage extractor's context populated.
+        self.raw_details: dict[tuple[str, str, str], object] = {}
 
     # --- connection / transaction control ---
 
@@ -168,6 +188,13 @@ class FakeDB:
         return {
             ext_id: row["content_hash"]
             for (src, comp, ext_id), row in self.postings.items()
+            if src == source and comp == company
+        }
+
+    def get_raw_details_by_external_id(self, conn, *, source, company):
+        return {
+            ext_id: payload
+            for (src, comp, ext_id), payload in self.raw_details.items()
             if src == source and comp == company
         }
 
@@ -447,6 +474,89 @@ def test_closed_at_is_written_once_not_overwritten(fake_db):
     assert posting["is_open"] is True
 
 
+# --- two-stage extractors (NEEDS_DETAILS): building an ExtractorContext ---
+
+
+def test_workday_row_processed_via_extractor_context(fake_db, monkeypatch):
+    monkeypatch.setenv("COMPANIES_FILE", str(FIXTURES / "companies_workday_test.yaml"))
+    fake_db.raw_details[("workday", "example", "JR0001")] = wd_detail_payload(
+        description="<p>Join our team.</p>", location="Edinburgh", country="United Kingdom"
+    )
+
+    row = make_row(
+        1, [wd_item("JR0001", "Graduate Software Engineer")], T0, source="workday", company="example"
+    )
+
+    process(fake_db, row)
+
+    posting = fake_db.postings[("workday", "example", "JR0001")]
+    assert posting["title"] == "Graduate Software Engineer"
+    assert posting["location"] == "United Kingdom, Edinburgh"
+    assert posting["is_open"] is True
+    assert posting["url"] == "https://example.wd503.myworkdayjobs.com/en-US/External/job/JR0001"
+
+    version = fake_db.posting_versions[0]
+    assert version["description_raw"] == "<p>Join our team.</p>"
+
+
+def test_workday_posting_without_detail_yet_gets_partial_posting(fake_db, monkeypatch):
+    monkeypatch.setenv("COMPANIES_FILE", str(FIXTURES / "companies_workday_test.yaml"))
+    # no raw_details seeded at all — detail_run.py hasn't fetched it yet
+
+    row = make_row(1, [wd_item("JR0001", "Graduate Software Engineer")], T0, source="workday", company="example")
+
+    process(fake_db, row)
+
+    posting = fake_db.postings[("workday", "example", "JR0001")]
+    assert posting["title"] == "Graduate Software Engineer"
+    assert posting["location"] is None
+    assert posting["is_open"] is True  # still tracked, not skipped/hidden
+
+
+def test_context_not_built_for_sources_that_dont_need_it(fake_db):
+    calls = []
+    original = fake_db.get_raw_details_by_external_id
+
+    def spy(conn, *, source, company):
+        calls.append((source, company))
+        return original(conn, source=source, company=company)
+
+    fake_db.get_raw_details_by_external_id = spy
+
+    process(fake_db, make_row(1, gh_payload([gh_job(1, "A")]), T0))
+
+    assert calls == []  # never even queried for a source that doesn't need it
+
+
+def test_workday_shrink_guard_previous_payload_uses_context_too(fake_db, monkeypatch):
+    # The shrink guard re-extracts the PREVIOUS raw payload to compare job
+    # counts. For a two-stage extractor that path must also build (or
+    # reuse) a context — extract() can't take a bare payload at all — or
+    # this crashes instead of just evaluating the guard.
+    monkeypatch.setenv("COMPANIES_FILE", str(FIXTURES / "companies_workday_test.yaml"))
+
+    t0_items = [wd_item(f"JR{i:04d}", f"Job {i}") for i in range(1, 21)]  # 20 jobs
+    process(fake_db, make_row(1, t0_items, T0, source="workday", company="example"))
+
+    t1 = T0 + timedelta(days=1)
+    t1_items = [wd_item(f"JR{i:04d}", f"Job {i}") for i in range(1, 6)]  # 5 jobs — 75% drop
+    process(fake_db, make_row(2, t1_items, t1, source="workday", company="example"))
+
+    # guard tripped (previous count 20 >= min, drop > 50%) — no closures
+    for i in range(6, 21):
+        posting = fake_db.postings[("workday", "example", f"JR{i:04d}")]
+        assert posting["is_open"] is True
+
+
+def test_workday_missing_companies_yaml_token_raises_clear_error(fake_db):
+    # fake_db's default COMPANIES_FILE (companies_parse_test.yaml) has no
+    # `workday:` section at all.
+    row = make_row(1, [wd_item("JR0001", "A")], T0, source="workday", company="example")
+
+    with pytest.raises(ValueError, match="no companies.yaml token found"):
+        parse_run.process_row(fake_db, row)
+
+
 # --- description stripping from raw_fetches after a successful parse ---
 
 
@@ -608,11 +718,11 @@ def test_run_skips_failed_fetches_without_payload(fake_db):
 
 
 def test_unsupported_source_row_is_skipped_without_raising_and_left_unparsed(fake_db, capsys):
-    # Workday rows exist in raw_fetches (ingest.py fetches it) but there's no
-    # registered extractor yet — process_row must not KeyError on EXTRACTORS
-    # and abort the whole run; it must skip just this row and keep going.
+    # A source with no registered extractor at all (unlike workday, which is
+    # registered now) — process_row must not KeyError on EXTRACTORS and
+    # abort the whole run; it must skip just this row and keep going.
     fake_db.raw_fetches_history.append(
-        make_row(1, [{"title": "Some Job"}], T0, source="workday", company="iberdrola")
+        make_row(1, [{"title": "Some Job"}], T0, source="bamboohr", company="somecompany")
     )
     fake_db.raw_fetches_history.append(make_row(2, gh_payload([gh_job(1, "A")]), T0))
 
@@ -623,12 +733,12 @@ def test_unsupported_source_row_is_skipped_without_raising_and_left_unparsed(fak
     assert len(fake_db.postings) == 1  # nothing created for the unsupported row
     assert fake_db.postings[("greenhouse", "acme", "1")]["is_open"] is True
 
-    workday_row = next(r for r in fake_db.raw_fetches_history if r["source"] == "workday")
-    assert workday_row["parsed_at"] is None  # left unparsed, so a future run retries it
+    unsupported_row = next(r for r in fake_db.raw_fetches_history if r["source"] == "bamboohr")
+    assert unsupported_row["parsed_at"] is None  # left unparsed, so a future run retries it
 
     out = capsys.readouterr().out
     assert "no extractor registered" in out
-    assert "workday/iberdrola" in out
+    assert "bamboohr/somecompany" in out
 
 
 # --- dry_run ---
@@ -684,6 +794,26 @@ def test_reconciliation_leaves_configured_company_untouched(fake_db):
     summary = parse_run.run()
 
     posting = fake_db.postings[("greenhouse", "acme", "1")]
+    assert posting["is_open"] is True
+    assert posting["closed_at"] is None
+    assert summary["reconciled_companies"] == []
+    assert summary["postings_reconciled"] == 0
+
+
+def test_reconciliation_leaves_configured_workday_company_untouched(fake_db, monkeypatch):
+    # Regression: a structured token (WorkdayToken) must compare equal to
+    # the plain company string get_open_source_companies returns, or every
+    # configured Workday company reads as orphaned and gets closed — this
+    # happened in production (workday/iberdrola, 221 postings wrongly
+    # closed, see CLAUDE.md).
+    monkeypatch.setenv("COMPANIES_FILE", str(FIXTURES / "companies_workday_test.yaml"))
+
+    row = make_row(1, [wd_item("JR0001", "Graduate Software Engineer")], T0, source="workday", company="example")
+    process(fake_db, row)
+
+    summary = parse_run.run()
+
+    posting = fake_db.postings[("workday", "example", "JR0001")]
     assert posting["is_open"] is True
     assert posting["closed_at"] is None
     assert summary["reconciled_companies"] == []
@@ -784,7 +914,7 @@ def test_retention_never_deletes_unparsed_rows_regardless_of_age(fake_db):
     # skipped_unsupported_source tests above) must never be deleted no
     # matter how old fetched_at is: only parsed_at gates eligibility.
     now = datetime.now(UTC)
-    old_unparsed = make_row(1, [{"title": "X"}], now - timedelta(days=100), source="workday", company="iberdrola")
+    old_unparsed = make_row(1, [{"title": "X"}], now - timedelta(days=100), source="bamboohr", company="somecompany")
     fake_db.raw_fetches_history.append(old_unparsed)
 
     summary = parse_run.run()

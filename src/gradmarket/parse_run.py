@@ -25,6 +25,7 @@ from typing import Any
 from gradmarket import db
 from gradmarket.config import load_companies, resolve_companies_file
 from gradmarket.parse import EXTRACTORS
+from gradmarket.parse.base import ExtractorContext
 from gradmarket.raw_fetches_pruning import strip_descriptions
 
 # Empty feeds always trip the guard. A shrink of more than this ratio only
@@ -72,6 +73,25 @@ def _deduplicate_postings(postings: list, *, source: str, company: str) -> list:
     return list(by_id.values())
 
 
+def _build_extractor_context(conn: Any, *, source: str, company: str) -> ExtractorContext:
+    """For a two-stage source (NEEDS_DETAILS = True) only — never called
+    otherwise. Generic across any such source: fetches that company's
+    raw_details keyed by external_id, and looks up its companies.yaml token
+    by matching str(token) == company (every token type, bare string or
+    structured like WorkdayToken, answers that — see WorkdayToken.__str__),
+    not by any source-specific knowledge of what a token looks like."""
+    details_by_external_id = db.get_raw_details_by_external_id(conn, source=source, company=company)
+
+    companies = load_companies(resolve_companies_file())
+    token = next((t for t in companies.get(source, []) if str(t) == company), None)
+    if token is None:
+        raise ValueError(
+            f"no companies.yaml token found for {source}/{company} — needed to build its extractor context"
+        )
+
+    return ExtractorContext(details_by_external_id=details_by_external_id, token=token)
+
+
 def process_row(conn: Any, row: dict, *, dry_run: bool = False) -> dict:
     """Process one raw_fetches row. Returns counts of what changed (or would
     change, under dry_run): inserted, updated, closed, versions.
@@ -99,12 +119,27 @@ def process_row(conn: Any, row: dict, *, dry_run: bool = False) -> dict:
     commit = not dry_run
 
     extractor = EXTRACTORS[source]
-    postings = extractor.extract(row["payload"])
+    # Two-stage sources (NEEDS_DETAILS — see parse/base.py) need a context
+    # built alongside their payload; every other source keeps the plain
+    # extract(payload) call. Never built for sources that don't need it —
+    # that would mean an unconditional raw_details query and a
+    # companies.yaml load on every single row, for nothing.
+    context = _build_extractor_context(conn, source=source, company=company) if extractor.NEEDS_DETAILS else None
+
+    def run_extract(payload: Any) -> list:
+        if extractor.NEEDS_DETAILS:
+            return extractor.extract(payload, context)
+        return extractor.extract(payload)
+
+    postings = run_extract(row["payload"])
     postings = _deduplicate_postings(postings, source=source, company=company)
     current_ids = {p.external_id for p in postings}
 
+    # The shrink guard's previous-payload comparison must go through the
+    # same context-aware path — a two-stage extractor can't take a bare
+    # payload at all, guard comparison or not.
     previous_payload = db.get_previous_raw_payload(conn, source=source, company=company, before=fetched_at)
-    previous_count = len(extractor.extract(previous_payload)) if previous_payload is not None else None
+    previous_count = len(run_extract(previous_payload)) if previous_payload is not None else None
 
     guard_tripped = _guard_tripped(len(postings), previous_count)
 
@@ -162,8 +197,15 @@ def process_row(conn: Any, row: dict, *, dry_run: bool = False) -> dict:
 
 
 def _configured_source_companies() -> set[tuple[str, str]]:
+    """(source, company) pairs, company always the plain identity string —
+    str(token), same as ingest.py's company = str(token) (see
+    WorkdayToken.__str__). Without this, a structured token (Workday)
+    never equals the plain string db.get_open_source_companies returns for
+    the same company, so every Workday company reads as orphaned and gets
+    closed — this happened in production (workday/iberdrola, 221 postings,
+    see CLAUDE.md)."""
     companies = load_companies(resolve_companies_file())
-    return {(source_name, token) for source_name, tokens in companies.items() for token in tokens}
+    return {(source_name, str(token)) for source_name, tokens in companies.items() for token in tokens}
 
 
 def _reconcile_orphaned_companies(conn: Any, *, dry_run: bool = False) -> tuple[list[str], int]:

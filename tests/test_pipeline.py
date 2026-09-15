@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 import requests
 
-from gradmarket import classify_run, ingest, parse_run, pipeline
+from gradmarket import classify_run, detail_run, ingest, parse_run, pipeline
 
 
 def _capture_pings(monkeypatch):
@@ -16,17 +16,25 @@ def _set_healthcheck_url(monkeypatch):
     monkeypatch.setenv("HEALTHCHECK_URL", "https://hc.example/ping/abc")
 
 
+def _stub_detail_run(monkeypatch):
+    monkeypatch.setattr(
+        detail_run, "run", lambda **kw: {"attempted": 0, "succeeded": 0, "failed": 0, "skipped_unconfigured": 0}
+    )
+
+
 def _stub_parse_and_classify(monkeypatch):
-    """Stubs both later stages with harmless fakes — every test that lets
-    ingest and parse both succeed reaches classify_run.run() for real unless
-    it's mocked too, and that means a real, full classification pass against
-    production. Always call this (or mock classify_run yourself) whenever a
-    test doesn't raise before reaching that stage."""
+    """Stubs every later stage with harmless fakes — every test that lets
+    ingest and parse both succeed reaches detail_run.run() and
+    classify_run.run() for real unless they're mocked too, and that means a
+    real, full detail-fetch/classification pass against production. Always
+    call this (or mock the later stages yourself) whenever a test doesn't
+    raise before reaching them."""
     monkeypatch.setattr(parse_run, "run", lambda: {"processed": 3, "skipped_failures": 0, "total_rows": 3})
+    _stub_detail_run(monkeypatch)
     monkeypatch.setattr(classify_run, "run", lambda: {"processed": 3, "updated": 3})
 
 
-def test_both_stages_succeed_pings_success_url(monkeypatch, capsys):
+def test_all_stages_succeed_pings_success_url(monkeypatch, capsys):
     _set_healthcheck_url(monkeypatch)
     calls = _capture_pings(monkeypatch)
     monkeypatch.setattr(ingest, "run", lambda: (5, 5))
@@ -38,7 +46,25 @@ def test_both_stages_succeed_pings_success_url(monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "ingest ok" in out
     assert "parse ok" in out
+    assert "detail fetch ok" in out
     assert "classify ok" in out
+
+
+def test_detail_run_called_with_pipelines_limit(monkeypatch):
+    monkeypatch.setattr(ingest, "run", lambda: (5, 5))
+    monkeypatch.setattr(parse_run, "run", lambda: {"processed": 3, "skipped_failures": 0, "total_rows": 3})
+    monkeypatch.setattr(classify_run, "run", lambda: {"processed": 3, "updated": 3})
+    detail_calls = []
+    monkeypatch.setattr(
+        detail_run,
+        "run",
+        lambda **kw: detail_calls.append(kw)
+        or {"attempted": 0, "succeeded": 0, "failed": 0, "skipped_unconfigured": 0},
+    )
+
+    pipeline.main()
+
+    assert detail_calls == [{"limit": pipeline.DETAIL_RUN_LIMIT}]
 
 
 def test_healthcheck_skipped_when_url_unset(monkeypatch):
@@ -62,6 +88,7 @@ def test_ingest_zero_succeeded_pings_fail_but_still_runs_parse(monkeypatch, caps
         "run",
         lambda: parse_calls.append(1) or {"processed": 2, "skipped_failures": 0, "total_rows": 2},
     )
+    _stub_detail_run(monkeypatch)
     monkeypatch.setattr(classify_run, "run", lambda: {"processed": 2, "updated": 2})
 
     pipeline.main()
@@ -71,6 +98,7 @@ def test_ingest_zero_succeeded_pings_fail_but_still_runs_parse(monkeypatch, caps
     out = capsys.readouterr().out
     assert "collection gap" in out
     assert "parse ok" in out
+    assert "detail fetch ok" in out
     assert "classify ok" in out
 
 
@@ -79,14 +107,17 @@ def test_ingest_raises_pings_fail_reraises_and_skips_later_stages(monkeypatch, c
     calls = _capture_pings(monkeypatch)
     monkeypatch.setattr(ingest, "run", lambda: (_ for _ in ()).throw(RuntimeError("db unreachable")))
     parse_calls = []
+    detail_calls = []
     classify_calls = []
     monkeypatch.setattr(parse_run, "run", lambda: parse_calls.append(1))
+    monkeypatch.setattr(detail_run, "run", lambda **kw: detail_calls.append(1))
     monkeypatch.setattr(classify_run, "run", lambda: classify_calls.append(1))
 
     with pytest.raises(RuntimeError, match="db unreachable"):
         pipeline.main()
 
     assert parse_calls == []  # never attempted
+    assert detail_calls == []  # never attempted
     assert classify_calls == []  # never attempted
     assert calls == [("https://hc.example/ping/abc/fail", {"timeout": 10})]
     out = capsys.readouterr().out
@@ -99,12 +130,15 @@ def test_parse_raises_after_successful_ingest_pings_fail_and_distinguishes_stage
     calls = _capture_pings(monkeypatch)
     monkeypatch.setattr(ingest, "run", lambda: (5, 5))
     monkeypatch.setattr(parse_run, "run", lambda: (_ for _ in ()).throw(RuntimeError("bad hash")))
+    detail_calls = []
     classify_calls = []
+    monkeypatch.setattr(detail_run, "run", lambda **kw: detail_calls.append(1))
     monkeypatch.setattr(classify_run, "run", lambda: classify_calls.append(1))
 
     with pytest.raises(RuntimeError, match="bad hash"):
         pipeline.main()
 
+    assert detail_calls == []  # never attempted
     assert classify_calls == []  # never attempted
     assert calls == [("https://hc.example/ping/abc/fail", {"timeout": 10})]
     out = capsys.readouterr().out
@@ -121,6 +155,7 @@ def test_parse_raises_after_zero_succeeded_ingest_pings_fail(monkeypatch, capsys
     calls = _capture_pings(monkeypatch)
     monkeypatch.setattr(ingest, "run", lambda: (5, 0))
     monkeypatch.setattr(parse_run, "run", lambda: (_ for _ in ()).throw(RuntimeError("also broken")))
+    monkeypatch.setattr(detail_run, "run", lambda **kw: pytest.fail("detail fetch should not run"))
     monkeypatch.setattr(classify_run, "run", lambda: pytest.fail("classify should not run"))
 
     with pytest.raises(RuntimeError, match="also broken"):
@@ -130,11 +165,33 @@ def test_parse_raises_after_zero_succeeded_ingest_pings_fail(monkeypatch, capsys
     assert "zero boards" in capsys.readouterr().out
 
 
-def test_classify_raises_after_successful_ingest_and_parse_pings_fail(monkeypatch, capsys):
+def test_detail_run_raises_after_successful_ingest_and_parse_pings_fail_and_skips_classify(monkeypatch, capsys):
     _set_healthcheck_url(monkeypatch)
     calls = _capture_pings(monkeypatch)
     monkeypatch.setattr(ingest, "run", lambda: (5, 5))
     monkeypatch.setattr(parse_run, "run", lambda: {"processed": 3, "skipped_failures": 0, "total_rows": 3})
+    monkeypatch.setattr(detail_run, "run", lambda **kw: (_ for _ in ()).throw(RuntimeError("workday 500")))
+    classify_calls = []
+    monkeypatch.setattr(classify_run, "run", lambda: classify_calls.append(1))
+
+    with pytest.raises(RuntimeError, match="workday 500"):
+        pipeline.main()
+
+    assert classify_calls == []  # never attempted
+    assert calls == [("https://hc.example/ping/abc/fail", {"timeout": 10})]
+    out = capsys.readouterr().out
+    assert "ingest ok" in out
+    assert "parse ok" in out
+    assert "no posting or raw data is at risk" in out
+    assert "collection gap" not in out
+
+
+def test_classify_raises_after_successful_ingest_parse_and_detail_pings_fail(monkeypatch, capsys):
+    _set_healthcheck_url(monkeypatch)
+    calls = _capture_pings(monkeypatch)
+    monkeypatch.setattr(ingest, "run", lambda: (5, 5))
+    monkeypatch.setattr(parse_run, "run", lambda: {"processed": 3, "skipped_failures": 0, "total_rows": 3})
+    _stub_detail_run(monkeypatch)
     monkeypatch.setattr(classify_run, "run", lambda: (_ for _ in ()).throw(RuntimeError("bad regex")))
 
     with pytest.raises(RuntimeError, match="bad regex"):
@@ -144,5 +201,6 @@ def test_classify_raises_after_successful_ingest_and_parse_pings_fail(monkeypatc
     out = capsys.readouterr().out
     assert "ingest ok" in out
     assert "parse ok" in out
+    assert "detail fetch ok" in out
     assert "least urgent" in out
     assert "collection gap" not in out

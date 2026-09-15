@@ -5,10 +5,13 @@ Unlike every other source, one Workday posting's data lives in two places:
 the list payload (gradmarket.sources.workday.fetch, stored in raw_fetches)
 gives identity and title; the per-posting detail payload
 (gradmarket.sources.workday.fetch_detail, stored in raw_details) gives
-description and location. extract() therefore takes both, plus the
-WorkdayToken needed to build each posting's public URL from its
-externalPath (list items don't carry a hostedUrl/absolute_url of their own
-the way every other source does).
+description and location. NEEDS_DETAILS = True signals this to
+parse_run.process_row, which builds an ExtractorContext (raw_details for
+this company keyed by external_id, plus the WorkdayToken from
+companies.yaml) and calls extract(payload, context) instead of the bare
+extract(payload) every other source gets. The token is needed to build each
+posting's public URL from its externalPath (list items don't carry a
+hostedUrl/absolute_url of their own the way every other source does).
 
 external_id is bulletFields[0] when present, falling back to externalPath —
 bulletFields is tenant-configurable in Workday, so a tenant that doesn't
@@ -40,8 +43,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from gradmarket.parse.base import ParsedPosting, compute_content_hash
+from gradmarket.parse.base import ExtractorContext, ParsedPosting, compute_content_hash
 from gradmarket.sources.workday import WorkdayToken
+
+# Two-stage source (see parse/base.py's NEEDS_DETAILS docs) — extract() takes
+# an ExtractorContext, not just the bare raw_fetches payload.
+NEEDS_DETAILS = True
 
 PUBLIC_URL_TEMPLATE = "https://{tenant}.{dc}.myworkdayjobs.com/en-US/{site}{external_path}"
 
@@ -69,17 +76,18 @@ def _location_text(job_posting_info: dict) -> str | None:
     return country_descriptor or joined or None
 
 
-def extract(
-    list_payload: Any,
-    details_by_external_id: dict[str, Any],
-    token: WorkdayToken,
-) -> list[ParsedPosting]:
+def extract(list_payload: Any, context: ExtractorContext) -> list[ParsedPosting]:
     """list_payload is the bare list gradmarket.sources.workday.fetch()
-    returns (raw_fetches.payload for this source). details_by_external_id
-    maps external_id -> the stripped detail JSON gradmarket.sources.workday.
-    fetch_detail() returns (raw_details.payload); an external_id with no
-    entry means its detail hasn't been fetched yet — see module docstring.
+    returns (raw_fetches.payload for this source). context.details_by_
+    external_id maps external_id -> the stripped detail JSON gradmarket.
+    sources.workday.fetch_detail() returns (raw_details.payload); an
+    external_id with no entry means its detail hasn't been fetched yet —
+    see module docstring. context.token is the WorkdayToken for this
+    company, from companies.yaml.
     """
+    details_by_external_id = context.details_by_external_id
+    token: WorkdayToken = context.token
+
     postings = []
     for item in list_payload:
         external_path = item.get("externalPath")
