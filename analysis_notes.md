@@ -26,6 +26,8 @@
 
 - Three ATS migrations in five weeks (Skyscanner, Sophos, Sage), two of which left the four platforms entirely. That's roughly 2% of the sampling frame churning per month, and it's a real constraint on any longitudinal claim.
 
+- Raw archive retained 30 days from 14 Sep; snapshots from 10 Aug to 11 Sep were deleted under disk pressure, so lifecycle data for that period cannot be re-derived from source. postings and posting_versions are complete and unaffected.
+
 
 
 

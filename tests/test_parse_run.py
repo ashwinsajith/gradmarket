@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -10,7 +11,13 @@ from gradmarket import parse_run
 from gradmarket.parse.greenhouse import extract as gh_extract
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
-T0 = datetime(2026, 1, 1, tzinfo=UTC)
+# Anchored to real "now", not a fixed historical date: run()'s automatic
+# retention sweep deletes parsed rows older than RAW_FETCHES_RETENTION_DAYS
+# (7) by wall-clock time, and every test below that calls run() (not just
+# the retention-specific ones) would otherwise have its fixture rows
+# deleted out from under it the moment they're parsed, since a fixed past
+# T0 only drifts further outside the window as real time passes.
+T0 = datetime.now(UTC)
 
 
 def gh_payload(jobs):
@@ -63,6 +70,7 @@ class FakeDB:
         # real JSONB "is this row stripped" detection, just the count
         # parse_run.py's --full guard reacts to.
         self.stripped_raw_fetches_count = 0
+        self.vacuum_calls = 0
 
     # --- connection / transaction control ---
 
@@ -74,6 +82,19 @@ class FakeDB:
 
     def count_stripped_raw_fetches(self, conn):
         return self.stripped_raw_fetches_count
+
+    def delete_old_parsed_raw_fetches(self, conn, *, before, commit=True):
+        if not commit:
+            self._ensure_snapshot()
+        to_delete = [r for r in self.raw_fetches_history if r["parsed_at"] is not None and r["fetched_at"] < before]
+        for r in to_delete:
+            self.raw_fetches_history.remove(r)
+        if commit:
+            self.commit()
+        return len(to_delete)
+
+    def vacuum_raw_fetches(self, conn):
+        self.vacuum_calls += 1
 
     def commit(self):
         self._snapshot = None
@@ -739,3 +760,74 @@ def test_reconciliation_respects_dry_run(fake_db, monkeypatch):
     posting = fake_db.postings[("greenhouse", "acme", "1")]
     assert posting["is_open"] is True  # unchanged — dry run rolled back
     assert posting["closed_at"] is None
+
+
+# --- automatic raw_fetches retention sweep, run after the main loop ---
+
+
+def test_retention_deletes_old_parsed_rows_and_reports_count(fake_db):
+    now = datetime.now(UTC)
+    old_parsed = make_row(1, gh_payload([gh_job(1, "A")]), now - timedelta(days=40), parsed_at="parsed")
+    recent_parsed = make_row(2, gh_payload([gh_job(2, "B")]), now - timedelta(days=1), parsed_at="parsed")
+    fake_db.raw_fetches_history.extend([old_parsed, recent_parsed])
+
+    summary = parse_run.run()
+
+    remaining_ids = {r["id"] for r in fake_db.raw_fetches_history}
+    assert remaining_ids == {2}  # only the row past the retention window was deleted
+    assert summary["raw_fetches_deleted"] == 1
+    assert fake_db.vacuum_calls == 1
+
+
+def test_retention_never_deletes_unparsed_rows_regardless_of_age(fake_db):
+    # A row that stays unparsed this run (unsupported source — see the
+    # skipped_unsupported_source tests above) must never be deleted no
+    # matter how old fetched_at is: only parsed_at gates eligibility.
+    now = datetime.now(UTC)
+    old_unparsed = make_row(1, [{"title": "X"}], now - timedelta(days=100), source="workday", company="iberdrola")
+    fake_db.raw_fetches_history.append(old_unparsed)
+
+    summary = parse_run.run()
+
+    assert fake_db.raw_fetches_history == [old_unparsed]
+    assert summary["raw_fetches_deleted"] == 0
+    assert fake_db.vacuum_calls == 0
+
+
+def test_retention_skipped_entirely_under_dry_run(fake_db):
+    now = datetime.now(UTC)
+    old_parsed = make_row(1, gh_payload([gh_job(1, "A")]), now - timedelta(days=40), parsed_at="parsed")
+    fake_db.raw_fetches_history.append(old_parsed)
+
+    summary = parse_run.run(dry_run=True)
+
+    assert fake_db.raw_fetches_history == [old_parsed]  # nothing deleted
+    assert summary["raw_fetches_deleted"] == 0
+    assert fake_db.vacuum_calls == 0  # VACUUM never even attempted, not just rolled back
+
+
+def test_retention_respects_custom_retention_days(fake_db):
+    now = datetime.now(UTC)
+    row_5_days_old = make_row(1, gh_payload([gh_job(1, "A")]), now - timedelta(days=5), parsed_at="parsed")
+    fake_db.raw_fetches_history.append(row_5_days_old)
+
+    summary = parse_run.run(retention_days=3)
+
+    assert fake_db.raw_fetches_history == []
+    assert summary["raw_fetches_deleted"] == 1
+
+
+def test_retention_count_and_message_appear_in_cli_summary(monkeypatch, capsys):
+    fake = FakeDB()
+    monkeypatch.setattr(parse_run, "db", fake)
+    monkeypatch.setenv("COMPANIES_FILE", str(FIXTURES / "companies_parse_test.yaml"))
+    now = datetime.now(UTC)
+    fake.raw_fetches_history.append(
+        make_row(1, gh_payload([gh_job(1, "A")]), now - timedelta(days=40), parsed_at="parsed")
+    )
+    monkeypatch.setattr(sys, "argv", ["parse_run"])
+
+    parse_run.main()
+
+    out = capsys.readouterr().out
+    assert "raw_fetches: 1 parsed row(s) deleted" in out

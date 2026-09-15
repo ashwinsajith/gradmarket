@@ -5,12 +5,21 @@ by default (tracks raw_fetches.parsed_at); pass --full to wipe postings and
 posting_versions and rebuild them from scratch — the derived tables are
 disposable, raw_fetches is the source of truth. A parser bug is recoverable;
 a collection gap is not.
+
+After the main loop and reconciliation, run() also deletes raw_fetches rows
+that are both parsed and older than RAW_FETCHES_RETENTION_DAYS, then VACUUMs
+the table — cleanup for the work this same pass just did, not a separate
+pipeline stage. raw_fetches filled a 5GB Railway volume once already and
+needed emergency manual deletion; this is the automatic backstop. Only ever
+touches parsed rows (never unparsed ones, regardless of age) and is skipped
+entirely under --dry-run.
 """
 
 from __future__ import annotations
 
 import argparse
 import sys
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from gradmarket import db
@@ -24,6 +33,14 @@ from gradmarket.raw_fetches_pruning import strip_descriptions
 # guarding it would mean never detecting genuine closures on small boards.
 SHRINK_GUARD_RATIO = 0.5
 SHRINK_GUARD_MIN_PREVIOUS = 10
+
+# raw_fetches filled a 5GB Railway volume and needed emergency manual
+# deletion once already — this is the automatic backstop. Stripped rows are
+# small (~11MB/day of collection), so even 30 days is only ~330MB against a
+# 5GB volume — the constraint here is giving a bad extraction bug enough of
+# a window to be caught and fixed retroactively from raw payloads, not
+# storage (see CLAUDE.md and DestructiveFullRebuildRefused below).
+RAW_FETCHES_RETENTION_DAYS = 30
 
 
 class DestructiveFullRebuildRefused(RuntimeError):
@@ -173,7 +190,13 @@ def _reconcile_orphaned_companies(conn: Any, *, dry_run: bool = False) -> tuple[
     return reconciled_companies, total_closed
 
 
-def run(*, full: bool = False, dry_run: bool = False, i_know_this_destroys_history: bool = False) -> dict:
+def run(
+    *,
+    full: bool = False,
+    dry_run: bool = False,
+    i_know_this_destroys_history: bool = False,
+    retention_days: int = RAW_FETCHES_RETENTION_DAYS,
+) -> dict:
     """dry_run runs all the same SQL — including schema setup, which always
     commits, since the tables have to exist for any of this to work — but
     every write after that stays uncommitted and gets rolled back at the end.
@@ -183,7 +206,10 @@ def run(*, full: bool = False, dry_run: bool = False, i_know_this_destroys_histo
     full+dry_run skips the destructive-rebuild guard below: TRUNCATE
     participates in the transaction like any other write here, so a dry-run
     --full is rolled back same as everything else and never actually
-    destroys anything (see reset_parsed_state's own docstring)."""
+    destroys anything (see reset_parsed_state's own docstring). The
+    retention sweep at the end is skipped outright under dry_run instead of
+    running-then-rolling-back — VACUUM can't participate in a transaction
+    at all, so there's no rollback-safe way to run it speculatively."""
     conn = db.get_connection()
     db.init_schema(conn)
 
@@ -240,6 +266,18 @@ def run(*, full: bool = False, dry_run: bool = False, i_know_this_destroys_histo
 
     reconciled_companies, postings_reconciled = _reconcile_orphaned_companies(conn, dry_run=dry_run)
 
+    # Retention cleanup for the work this run just did — not a separate
+    # pipeline stage. Skipped entirely under dry_run (see run()'s docstring:
+    # VACUUM can't be part of a rolled-back transaction, so there's no
+    # speculative way to run this under dry_run the way everything else
+    # here does).
+    raw_fetches_deleted = 0
+    if not dry_run:
+        cutoff = datetime.now(UTC) - timedelta(days=retention_days)
+        raw_fetches_deleted = db.delete_old_parsed_raw_fetches(conn, before=cutoff)
+        if raw_fetches_deleted:
+            db.vacuum_raw_fetches(conn)
+
     if dry_run:
         conn.rollback()
     conn.close()
@@ -250,6 +288,7 @@ def run(*, full: bool = False, dry_run: bool = False, i_know_this_destroys_histo
         "skipped_unsupported_source": skipped_unsupported_source,
         "total_rows": len(rows),
         "dry_run": dry_run,
+        "raw_fetches_deleted": raw_fetches_deleted,
         "postings_inserted": totals["inserted"],
         "postings_updated": totals["updated"],
         "postings_closed": totals["closed"],
@@ -280,13 +319,27 @@ def parse_args() -> argparse.Namespace:
             "only surviving copy of that description history, irrecoverably"
         ),
     )
+    parser.add_argument(
+        "--retention-days",
+        type=int,
+        default=RAW_FETCHES_RETENTION_DAYS,
+        help=(
+            f"Delete parsed raw_fetches rows older than this many days after the run "
+            f"(default: {RAW_FETCHES_RETENTION_DAYS}); never deletes unparsed rows"
+        ),
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
     try:
-        summary = run(full=args.full, dry_run=args.dry_run, i_know_this_destroys_history=args.i_know_this_destroys_history)
+        summary = run(
+            full=args.full,
+            dry_run=args.dry_run,
+            i_know_this_destroys_history=args.i_know_this_destroys_history,
+            retention_days=args.retention_days,
+        )
     except DestructiveFullRebuildRefused as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         raise SystemExit(1) from exc
@@ -302,6 +355,7 @@ def main() -> None:
         f"{summary['postings_updated']} updated, {summary['postings_closed']} closed"
     )
     print(f"{prefix}posting_versions: {summary['versions_appended']} appended")
+    print(f"{prefix}raw_fetches: {summary['raw_fetches_deleted']} parsed row(s) deleted (retention)")
     if summary["reconciled_companies"]:
         print(
             f"{prefix}reconciled {len(summary['reconciled_companies'])} company/companies no longer "

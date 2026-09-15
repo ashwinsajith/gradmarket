@@ -507,6 +507,50 @@ def close_orphaned_postings(
     return count
 
 
+def delete_old_parsed_raw_fetches(conn: psycopg.Connection, *, before: Any, commit: bool = True) -> int:
+    """Permanently delete raw_fetches rows older than `before` (by
+    fetched_at) — but ONLY ones already parsed (parsed_at IS NOT NULL).
+    An unparsed row is never a deletion candidate regardless of age: a
+    collection gap is unrecoverable, while a parsed row's raw payload isn't
+    — posting_versions is its durable copy, and parse_run.process_row
+    already stripped its description text before this ever runs (see
+    CLAUDE.md). Backs parse_run.py's automatic retention sweep, run after
+    every parse pass so raw_fetches doesn't grow without bound. Returns
+    rows deleted."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "DELETE FROM raw_fetches WHERE parsed_at IS NOT NULL AND fetched_at < %s",
+            (before,),
+        )
+        count = cur.rowcount
+    if commit:
+        conn.commit()
+    return count
+
+
+def vacuum_raw_fetches(conn: psycopg.Connection) -> None:
+    """Plain VACUUM (never VACUUM FULL) on raw_fetches, so space freed by
+    delete_old_parsed_raw_fetches becomes reusable by Postgres without
+    needing room for a full table rewrite — VACUUM FULL needs free space
+    roughly equal to the table's own size to build its copy, which is
+    exactly what's unavailable under the disk pressure this retention sweep
+    exists to relieve; it has failed here for that reason before.
+
+    VACUUM cannot run inside a transaction block, so this flips the
+    connection to autocommit for the call and restores it after. Must be
+    called only when there's no open transaction (i.e. right after a
+    commit) — the caller ensures that by calling this immediately after
+    delete_old_parsed_raw_fetches's own commit.
+    """
+    previous_autocommit = conn.autocommit
+    conn.autocommit = True
+    try:
+        with conn.cursor() as cur:
+            cur.execute("VACUUM raw_fetches")
+    finally:
+        conn.autocommit = previous_autocommit
+
+
 def get_postings_to_classify(conn: psycopg.Connection, *, full: bool = False) -> list[dict]:
     """id, title, location, and latest description for every posting still
     needing classification (classified_at IS NULL), or every posting at all

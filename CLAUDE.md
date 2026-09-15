@@ -125,6 +125,30 @@ Postings are observed over time, not stored once:
   (`db.count_stripped_raw_fetches`) unless passed
   `--i-know-this-destroys-history` — never pass that flag without exporting
   anything description-dependent (e.g. embeddings) first.
+- Beyond stripping descriptions, `raw_fetches` rows are deleted outright
+  once they're both parsed and older than `RAW_FETCHES_RETENTION_DAYS`
+  (default 30) — `parse_run.run()` does this itself after its main loop and
+  reconciliation (`db.delete_old_parsed_raw_fetches`), then runs a plain
+  `VACUUM` (never `VACUUM FULL`, which needs room for a full table copy and
+  has failed here under exactly the disk pressure this exists to relieve)
+  so the freed space is actually reusable. raw_fetches filled a 5GB Railway
+  volume once already and needed emergency manual deletion; this is the
+  automatic backstop. 30 days is sized for the debugging window, not
+  storage — stripped rows are small (~11MB/day of collection), so even 30
+  days is only ~330MB against the 5GB volume; the point of the window is
+  giving a bad extraction bug time to be caught and fixed retroactively
+  from raw payloads before they're gone. Only ever deletes parsed rows (an
+  unparsed row is never a candidate, regardless of age — a collection gap
+  is unrecoverable) and is skipped entirely under `--dry-run`, since
+  `VACUUM` can't participate in a transaction and so has no rollback-safe
+  way to run speculatively.
+  **Consequence:** raw history now effectively only goes back about 30
+  days. `--full`'s rebuild-from-`raw_fetches` can only ever reconstruct
+  descriptions for postings whose raw row is still within that window —
+  everything older has already had both its description stripped *and*
+  its row deleted — so the destructive-rebuild guard above now applies to
+  essentially all history in a normally-operating database, not just rows
+  someone manually pruned.
 
 ## Gotchas
 - A 200 response with an empty jobs array does NOT mean all jobs closed. It usually means the company switched ATS provider. Treating it as closure corrupts history for every posting they had. Handle empty-but-200 distinctly.
