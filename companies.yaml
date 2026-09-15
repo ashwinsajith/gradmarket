@@ -188,3 +188,8 @@ workday:
     tenant: iberdrola
     dc: wd3
     site: Iberdrola
+    
+  - company: lloydsbanking
+    tenant: lbg
+    dc: wd3
+    site: Graduate_careers

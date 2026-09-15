@@ -29,20 +29,17 @@ cycle, so that freshly-fetched detail doesn't reach postings/
 posting_versions until a LATER day's parse pass re-reads a fresh raw_fetches
 row for it (see parse/workday.py's module docstring on the two-stage raw
 tables). Concretely: a new Workday posting's very first classification can
-happen with location=None/description_raw=None, and since classify_run only
-classifies a posting once (classified_at IS NULL), that first, incomplete
-classification is never automatically redone once the real description
-lands a day or two later.
+happen with location=None/description_raw=None.
 
-Decision: this is accepted, not fixed, for now. Workday's footprint is a
-single company today, so the blast radius is small, and unlike a collection
-gap this is trivially correctable — classify_run --full re-tags every
-posting, pure functions, no data at risk (see the severity note above and
-CLAUDE.md). Building machinery to detect "classified before its first real
-description arrived" and selectively reclassify just those postings would
-be real, non-trivial scope for a problem that a periodic --full already
-fixes for free. Revisit if Workday's postings volume grows enough that a
-day-one misclassification rate actually matters for search quality.
+That used to mean the posting stayed misclassified forever — classify_run
+only classified a posting once, gated on classified_at IS NULL, so the real
+content arriving a day or two later in a new posting_versions row was never
+picked up. Fixed in db.get_postings_to_classify: it now also returns any
+posting whose latest posting_versions.observed_at is newer than its
+classified_at (a stale classification, not just a missing one), so the very
+next classify_run pass after that later parse re-tags it automatically. Not
+Workday-specific — the same gap applies to any source where a company edits
+a posting's title or location after it was first seen.
 
 DETAIL_RUN_LIMIT bounds detail_run per cycle for the same reason its own
 --limit flag exists: a brand-new tenant's backfill is its entire board, and

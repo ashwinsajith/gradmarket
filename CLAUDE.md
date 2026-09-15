@@ -173,12 +173,14 @@ Postings are observed over time, not stored once:
   so the freshly-fetched text doesn't reach `posting_versions` until a
   *later* day's parse pass re-reads a fresh raw_fetches row for it. A new
   Workday posting's very first classification can therefore happen with
-  `description_raw = None`, and since classification only happens once
-  (`classified_at IS NULL`), that first pass is never automatically redone
-  once the real description lands a day or two later. Accepted, not fixed:
-  Workday is one company today, and `classify_run --full` (pure functions,
-  rerun anytime) already fixes it for free — see pipeline.py's own
-  docstring for the full reasoning.
+  `description_raw = None`. This used to mean it stayed misclassified
+  forever, since classification only ran once (`classified_at IS NULL`) —
+  fixed by `get_postings_to_classify` also picking up any posting whose
+  latest `posting_versions.observed_at` is newer than its `classified_at`
+  (a stale classification, not just a missing one). Not Workday-specific:
+  the same gap applies to any source where a company edits a posting's
+  title or location after it was first seen. `--full` still reclassifies
+  everything unconditionally, version freshness included.
 
 ## Constraints
 - Job description text is the companies' copyright. Store privately, never

@@ -7,6 +7,7 @@ import pytest
 from gradmarket import classify_run
 
 T0 = "2026-01-01T00:00:00+00:00"
+T1 = "2026-01-02T00:00:00+00:00"  # later than T0 — plain ISO strings, sort lexicographically
 
 
 class FakeDB:
@@ -45,7 +46,20 @@ class FakeDB:
         pass
 
     def get_postings_to_classify(self, conn, *, full=False):
-        rows = self.postings.values() if full else (p for p in self.postings.values() if p["classified_at"] is None)
+        def needs_classification(p):
+            if full:
+                return True
+            if p["classified_at"] is None:
+                return True
+            # Mirrors db.get_postings_to_classify's OR clause: classified
+            # once, but a newer posting_versions row exists since — stale,
+            # not missing, classification. latest_version_observed_at=None
+            # models no posting_versions row at all (LEFT JOIN LATERAL's
+            # NULL), which never counts as "newer".
+            latest = p.get("latest_version_observed_at")
+            return latest is not None and latest > p["classified_at"]
+
+        rows = (p for p in self.postings.values() if needs_classification(p))
         return sorted(
             (
                 {"id": p["id"], "title": p["title"], "location": p["location"], "description_raw": p["description_raw"]}
@@ -67,7 +81,7 @@ class FakeDB:
         return len(classifications)
 
 
-def make_posting(id, *, title=None, location=None, description_raw=None, classified_at=None):
+def make_posting(id, *, title=None, location=None, description_raw=None, classified_at=None, latest_version_observed_at=None):
     return {
         "id": id,
         "title": title,
@@ -76,6 +90,7 @@ def make_posting(id, *, title=None, location=None, description_raw=None, classif
         "location_class": None,
         "seniority_class": None,
         "classified_at": classified_at,
+        "latest_version_observed_at": latest_version_observed_at,
     }
 
 
@@ -113,6 +128,54 @@ def test_skips_already_classified_postings_without_full(fake_db):
     assert fake_db.postings[1]["classified_at"] == T0
 
 
+def test_reclassifies_posting_with_a_version_newer_than_its_classification(fake_db):
+    # e.g. a Workday posting: classified once as "unknown" while its detail
+    # was still missing, then a later parse appends a new posting_versions
+    # row once the real description/location arrive — classified_at IS
+    # NULL alone would never see it again.
+    fake_db.postings[1] = make_posting(
+        1,
+        title="Graduate Software Engineer",
+        location="United Kingdom, Edinburgh",
+        classified_at=T0,
+        latest_version_observed_at=T1,
+    )
+
+    summary = classify_run.run()
+
+    assert summary["processed"] == 1
+    assert fake_db.postings[1]["classified_at"] != T0
+    assert fake_db.postings[1]["location_class"] == "uk"
+
+
+def test_does_not_reclassify_posting_with_no_newer_version(fake_db):
+    fake_db.postings[1] = make_posting(
+        1,
+        title="Graduate Engineer",
+        location="London, UK",
+        classified_at=T1,
+        latest_version_observed_at=T0,  # version predates the classification
+    )
+
+    summary = classify_run.run()
+
+    assert summary["processed"] == 0
+    assert fake_db.postings[1]["classified_at"] == T1  # untouched
+
+
+def test_does_not_reclassify_posting_with_no_versions_at_all(fake_db):
+    # latest_version_observed_at=None models no posting_versions row —
+    # LEFT JOIN LATERAL's NULL never counts as "newer than classified_at".
+    fake_db.postings[1] = make_posting(
+        1, title="Graduate Engineer", location="London, UK", classified_at=T0, latest_version_observed_at=None
+    )
+
+    summary = classify_run.run()
+
+    assert summary["processed"] == 0
+    assert fake_db.postings[1]["classified_at"] == T0
+
+
 def test_full_reclassifies_everything(fake_db):
     fake_db.postings[1] = make_posting(1, title="Graduate Engineer", location="London, UK", classified_at=T0)
     fake_db.postings[1]["location_class"] = "non_uk"  # simulate a stale/wrong prior classification
@@ -124,6 +187,21 @@ def test_full_reclassifies_everything(fake_db):
     assert fake_db.postings[1]["location_class"] == "uk"
     assert fake_db.postings[1]["seniority_class"] == "early"
     assert fake_db.postings[1]["classified_at"] != T0
+
+
+def test_full_returns_everything_regardless_of_version_freshness(fake_db):
+    # --full must bypass the new version-freshness check the same way it
+    # already bypasses classified_at IS NULL — a posting with no newer
+    # version (which would be skipped without --full) still gets
+    # reclassified once --full is passed.
+    fake_db.postings[1] = make_posting(
+        1, title="Graduate Engineer", location="London, UK", classified_at=T1, latest_version_observed_at=T0
+    )
+
+    summary = classify_run.run(full=True)
+
+    assert summary["processed"] == 1
+    assert fake_db.postings[1]["classified_at"] != T1
 
 
 def test_never_touches_is_open_or_closed_at(fake_db):

@@ -566,18 +566,33 @@ def vacuum_raw_fetches(conn: psycopg.Connection) -> None:
 
 
 def get_postings_to_classify(conn: psycopg.Connection, *, full: bool = False) -> list[dict]:
-    """id, title, location, and latest description for every posting still
-    needing classification (classified_at IS NULL), or every posting at all
-    when full=True. Open and closed postings alike — classification tags,
-    it doesn't care whether the posting is still live."""
-    where_clause = "" if full else "WHERE p.classified_at IS NULL"
+    """id, title, location, and latest description for every posting
+    needing classification, or every posting at all when full=True.
+    Open and closed postings alike — classification tags, it doesn't care
+    whether the posting is still live.
+
+    "Needing classification" is classified_at IS NULL (never classified)
+    OR the latest posting_versions.observed_at is strictly after
+    classified_at (classified once, but content has changed since — a
+    stale classification, not a missing one). The second case matters for
+    any source where a posting's content can legitimately change after it
+    was first classified, not just Workday: a two-stage source whose
+    description/location arrive after the posting's first parse is the
+    common trigger (parse runs before detail_run in pipeline.py, so a new
+    Workday posting's first version is created empty, gets classified as
+    "unknown", and its real content lands in a later version — one that,
+    without this OR clause, classified_at IS NULL would never see again).
+    But an ordinary source editing a posting's title after the fact hits
+    the exact same gap; this isn't Workday-specific.
+    """
+    where_clause = "" if full else "WHERE p.classified_at IS NULL OR pv.observed_at > p.classified_at"
     with conn.cursor() as cur:
         cur.execute(
             f"""
             SELECT p.id, p.title, p.location, pv.description_raw
             FROM postings p
             LEFT JOIN LATERAL (
-                SELECT description_raw
+                SELECT description_raw, observed_at
                 FROM posting_versions
                 WHERE posting_id = p.id
                 ORDER BY observed_at DESC
