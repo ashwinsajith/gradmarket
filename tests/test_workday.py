@@ -11,6 +11,7 @@ FIXTURES = Path(__file__).resolve().parent / "fixtures"
 JOBS_LIST = json.loads((FIXTURES / "workday_jobs_list.json").read_text())
 JOB_DETAIL = json.loads((FIXTURES / "workday_job_detail.json").read_text())
 BAD_SITE_404 = json.loads((FIXTURES / "workday_bad_site_404.json").read_text())
+BARCLAYS_FILTERED_JOBS_LIST = json.loads((FIXTURES / "workday_jobs_list_barclays_filtered.json").read_text())
 
 TOKEN = workday.WorkdayToken(company="example", tenant="example", dc="wd503", site="External")
 
@@ -69,6 +70,97 @@ def test_fetch_single_page_success(monkeypatch):
     assert headers["Content-Type"] == "application/json"
     assert headers["Accept"] == "application/json"
     assert headers["Accept-Language"] == "en-US"
+
+
+# --- optional server-side facet filtering ---
+
+
+def test_fetch_passes_facets_through_as_applied_facets(monkeypatch):
+    # Fixture is a representative sample of the Barclays filtered response
+    # shape (real board: 973 total, 153 when filtered to these three
+    # workerSubType ids — see CLAUDE.md) — total here matches the fixture's
+    # own 3 sample postings so this test isn't also exercising pagination.
+    no_sleep(monkeypatch)
+    token = workday.WorkdayToken(
+        company="barclays",
+        tenant="barclays",
+        dc="wd3",
+        site="External_Career_Site_Barclays",
+        facets={
+            "workerSubType": [
+                "6139d325cdcc1001a72ce8fbe2290000",
+                "6139d325cdcc1001a72ceb63d5d60001",
+                "6139d325cdcc1001a72ceac9adfe0000",
+            ]
+        },
+    )
+    calls = []
+
+    def fake_post(url, json, headers, timeout):
+        calls.append((url, json))
+        return FakeResponse(200, BARCLAYS_FILTERED_JOBS_LIST)
+
+    monkeypatch.setattr(requests, "post", fake_post)
+
+    result = workday.fetch(token)
+
+    assert result.status_code == 200
+    assert result.payload == BARCLAYS_FILTERED_JOBS_LIST["jobPostings"]
+    assert result.job_count == 3
+    url, body = calls[0]
+    assert url == "https://barclays.wd3.myworkdayjobs.com/wday/cxs/barclays/External_Career_Site_Barclays/jobs"
+    assert body["appliedFacets"] == {
+        "workerSubType": [
+            "6139d325cdcc1001a72ce8fbe2290000",
+            "6139d325cdcc1001a72ceb63d5d60001",
+            "6139d325cdcc1001a72ceac9adfe0000",
+        ]
+    }
+
+
+def test_fetch_sends_empty_applied_facets_when_none_configured(monkeypatch):
+    no_sleep(monkeypatch)
+    calls = []
+    monkeypatch.setattr(requests, "post", lambda url, json, headers, timeout: calls.append(json) or FakeResponse(200, JOBS_LIST))
+
+    workday.fetch(TOKEN)  # TOKEN has no facets configured
+
+    assert calls[0]["appliedFacets"] == {}
+
+
+def test_fetch_passes_facets_across_pagination(monkeypatch):
+    # A filtered board still paginates — every page request must carry the
+    # same appliedFacets, not just the first.
+    no_sleep(monkeypatch)
+    token = workday.WorkdayToken(
+        company="barclays", tenant="barclays", dc="wd3", site="External_Career_Site_Barclays",
+        facets={"workerSubType": ["id-1"]},
+    )
+    full_page = {
+        "total": 21,
+        "jobPostings": [{"title": f"Job {i}", "externalPath": f"/job/j{i}"} for i in range(workday.PAGE_LIMIT)],
+    }
+    second_page = {"total": 21, "jobPostings": [{"title": "Job 21", "externalPath": "/job/j21"}]}
+    responses = [FakeResponse(200, full_page), FakeResponse(200, second_page)]
+    bodies = []
+
+    def fake_post(url, json, headers, timeout):
+        bodies.append(json)
+        return responses.pop(0)
+
+    monkeypatch.setattr(requests, "post", fake_post)
+
+    result = workday.fetch(token)
+
+    assert result.job_count == workday.PAGE_LIMIT + 1
+    assert len(bodies) == 2
+    assert all(body["appliedFacets"] == {"workerSubType": ["id-1"]} for body in bodies)
+
+
+def test_workday_token_facets_defaults_to_empty_dict():
+    token = workday.WorkdayToken(company="example", tenant="example", dc="wd503", site="External")
+
+    assert token.facets == {}
 
 
 def test_fetch_paginates_until_total_collected(monkeypatch):

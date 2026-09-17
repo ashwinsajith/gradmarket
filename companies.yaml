@@ -193,3 +193,104 @@ workday:
     tenant: lbg
     dc: wd3
     site: Graduate_careers
+    detail_filter: false
+
+  - company: barclays
+    tenant: barclays
+    dc: wd3
+    site: External_Career_Site_Barclays
+    facets:
+      workerSubType:
+        - 6139d325cdcc1001a72ce8fbe2290000
+        - 6139d325cdcc1001a72ceb63d5d60001
+        - 6139d325cdcc1001a72ceac9adfe0000
+  
+  - company: unilever
+    tenant: unilever
+    dc: wd3
+    site: Unilever_Early_Careers
+    detail_filter: false
+
+  - company: rollsroyce
+    tenant: rollsroyce
+    dc: wd3
+    site: Intern_Graduate
+    detail_filter: false
+
+  - company: deloitteie
+    tenant: deloitteie
+    dc: wd3
+    site: Early_Careers
+    detail_filter: false
+
+  - company: nvidia
+    tenant: nvidia
+    dc: wd5
+    site: NVIDIAExternalCareerSite
+    facets:
+      workerSubType:
+        - 0c40f6bd1d8f10adf6dae42e46d44a17
+        - ab40a98049581037a3ada55b087049b7
+
+  - company: morganstanley
+    tenant: ms
+    dc: wd5
+    site: External
+    facets:
+      workerSubType:
+        - 5a72a211d621102a11412ae10c95037b
+
+  - company: cisco
+    tenant: cisco
+    dc: wd5
+    site: Cisco_Careers
+    facets:
+      workerSubType:
+        - a5e1942e7b2c01c6907030106001b700
+
+  - company: salesforce
+    tenant: salesforce
+    dc: wd12
+    site: External_Career_Site
+    facets:
+      workerSubType:
+        - 3a910852b2c31010f48d2cefdccd0000
+        - 3a910852b2c31010f48d29ef5db50000
+
+  - company: santander
+    tenant: santander
+    dc: wd3
+    site: SantanderCareers
+    facets:
+      workerSubType:
+        - c26ab0efcb8401233f6601097836b01a
+        - c26ab0efcb84015d14d602097836b71a
+
+  - company: mastercard
+    tenant: mastercard
+    dc: wd1
+    site: Campus
+    detail_filter: false
+
+  - company: visa
+    tenant: visa
+    dc: wd5
+    site: Visa_Early_Careers
+    detail_filter: false
+
+  - company: asda
+    tenant: asda
+    dc: wd103
+    site: AsdaJobs
+    facets:
+      workerSubType:
+        - fc4878f54dfe100f17c859253f9e0000
+
+  - company: hyperion
+    tenant: hyperiongrp
+    dc: wd3
+    site: Hyperion_External
+    facets:
+      workerSubType:
+        - cd3fc549fd3f1059499fa58cc52b1339
+        - cd3fc549fd3f1059499fa6ea62ff133a

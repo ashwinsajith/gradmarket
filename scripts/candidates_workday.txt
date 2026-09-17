@@ -8,3 +8,28 @@
 # Example (already confirmed working, already in companies.yaml):
 # iberdrola,iberdrola,wd3,Iberdrola
 
+lloydsbanking,lbg,wd3,Graduate_careers
+barclays,barclays,wd3,External_Career_Site_Barclays
+santander,santander,wd3,SantanderCareers
+nationwide,nationwide,wd1,Nationwide_Career
+deloitteie,deloitteie,wd3,Early_Careers
+aviva,aviva,wd1,External
+rollsroyce,rollsroyce,wd3,Intern_Graduate
+visa,visa,wd5,Visa_Early_Careers
+mastercard,mastercard,wd1,Campus
+morganstanley,ms,wd5,External
+statestreet,statestreet,wd1,Global
+fidelity,fil,wd3,001
+asda,asda,wd103,AsdaJobs
+unilever,unilever,wd3,Unilever_Early_Careers
+cocacola,coke,wd1,coca-cola-careers
+nvidia,nvidia,wd5,NVIDIAExternalCareerSite
+cisco,cisco,wd5,Cisco_Careers
+salesforce,salesforce,wd12,External_Career_Site
+workday,workday,wd5,Workday
+expedia,expedia,wd108,search
+maersk,maersk,wd3,Maersk_Careers
+hyperion,hyperiongrp,wd3,Hyperion_External
+
+
+

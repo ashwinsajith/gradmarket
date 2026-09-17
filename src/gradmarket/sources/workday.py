@@ -24,6 +24,21 @@ A bad site 404s cleanly, with an errorCode and a message naming
 Job_Posting_Site_ID — that's a permanent misconfiguration (wrong `site` in
 companies.yaml), not a transient failure, so it isn't retried.
 
+Optional server-side facet filtering: a Workday board exposes facets like
+workerSubType (occasionally jobFamilyGroup or jobFamily) whose values often
+identify early-careers roles by the employer's own classification —
+verified against Barclays' 973-posting board, which returns exactly 153
+when filtered to its Graduate/Intern/Apprentice workerSubType ids, every
+one a genuine graduate programme. WorkdayToken.facets carries this as a
+mapping of facet parameter to a list of ids, sent as the request body's
+appliedFacets; it defaults to {}, so a board with no facets configured
+behaves exactly as before this existed. Facet ids are opaque and
+tenant-specific — discovered per board with scripts/probe_facets.py, never
+inferred or guessed. See CLAUDE.md for the close-detection tradeoff a
+facet-filtered board takes on (it's no longer a *complete* feed, so a
+posting reclassified out of the filtered subtype looks like a closure
+rather than what it actually is).
+
 fetch_detail(tenant, dc, site, external_path) is separate: a GET to the same
 CXS base plus the posting's externalPath, returning the full detail JSON for
 one posting. Requires Accept: application/json explicitly — without it,
@@ -43,7 +58,7 @@ isn't documented and shouldn't be guessed at with a single hardcoded path.
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import requests
@@ -89,12 +104,31 @@ class WorkdayToken:
     `company` is the same identity slug every other source's bare token
     plays double duty as (what lands in raw_fetches.company /
     postings.company); it isn't necessarily equal to `tenant`.
+
+    `detail_filter` is a per-board toggle read by detail_run.py, not by
+    fetch() here — it decides whether a posting's title has to look
+    early-careers before its detail gets fetched. Defaults on; a
+    graduate-only board (e.g. Lloyds) sets it off in companies.yaml since
+    every posting there is already relevant — see CLAUDE.md and
+    detail_run.is_early_careers_title.
+
+    `facets` is sent as-is as the request body's appliedFacets — a mapping
+    of facet parameter (workerSubType, occasionally jobFamilyGroup or
+    jobFamily) to a list of opaque, tenant-specific facet ids. Empty by
+    default, meaning an unfiltered board (every posting), same behaviour as
+    before this field existed. These ids can only come from companies.yaml
+    — never inferred or guessed, since they're meaningless outside the
+    tenant that issued them. See scripts/probe_facets.py for how to find
+    them, and CLAUDE.md for the close-detection tradeoff a filtered board
+    takes on.
     """
 
     company: str
     tenant: str
     dc: str
     site: str
+    detail_filter: bool = True
+    facets: dict[str, list[str]] = field(default_factory=dict)
 
     def __str__(self) -> str:
         """The identity slug, same role a bare string token plays for every
@@ -188,16 +222,21 @@ def _request_with_retries(make_request: Any) -> tuple[int | None, dict | None, s
     return None, None, "exhausted retries"
 
 
-def _fetch_list_page(url: str, offset: int) -> tuple[int | None, dict | None, str | None]:
-    body = {"appliedFacets": {}, "limit": PAGE_LIMIT, "offset": offset, "searchText": ""}
+def _fetch_list_page(
+    url: str, offset: int, applied_facets: dict[str, list[str]]
+) -> tuple[int | None, dict | None, str | None]:
+    body = {"appliedFacets": applied_facets, "limit": PAGE_LIMIT, "offset": offset, "searchText": ""}
     headers = {**LIST_HEADERS, "User-Agent": USER_AGENT}
     return _request_with_retries(lambda: requests.post(url, json=body, headers=headers, timeout=TIMEOUT))
 
 
 def fetch(token: WorkdayToken) -> FetchResult:
     url = LIST_URL_TEMPLATE.format(tenant=token.tenant, dc=token.dc, site=token.site)
+    # token.facets defaults to {} (see WorkdayToken), so an unfiltered board
+    # sends the same empty appliedFacets it always has.
+    applied_facets = token.facets
 
-    status, data, error = _fetch_list_page(url, offset=0)
+    status, data, error = _fetch_list_page(url, offset=0, applied_facets=applied_facets)
     if status != 200 or data is None:
         return FetchResult(status_code=status, payload=None, job_count=0, error=error)
 
@@ -215,7 +254,7 @@ def fetch(token: WorkdayToken) -> FetchResult:
             )
 
         time.sleep(INTER_PAGE_SLEEP)
-        status, data, error = _fetch_list_page(url, offset=len(postings))
+        status, data, error = _fetch_list_page(url, offset=len(postings), applied_facets=applied_facets)
         if status != 200 or data is None:
             return FetchResult(status_code=status, payload=None, job_count=0, error=error)
 

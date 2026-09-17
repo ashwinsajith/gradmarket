@@ -52,12 +52,12 @@ class FakeDB:
             if p["classified_at"] is None:
                 return True
             # Mirrors db.get_postings_to_classify's OR clause: classified
-            # once, but a newer posting_versions row exists since — stale,
-            # not missing, classification. latest_version_observed_at=None
-            # models no posting_versions row at all (LEFT JOIN LATERAL's
-            # NULL), which never counts as "newer".
-            latest = p.get("latest_version_observed_at")
-            return latest is not None and latest > p["classified_at"]
+            # once, but the row has been written since (updated_at, real
+            # write time — never posting_versions.observed_at, which is
+            # just the raw row's own fetched_at and can be arbitrarily old
+            # for a re-parsed historical row; see CLAUDE.md).
+            updated_at = p.get("updated_at")
+            return updated_at is not None and updated_at > p["classified_at"]
 
         rows = (p for p in self.postings.values() if needs_classification(p))
         return sorted(
@@ -81,7 +81,7 @@ class FakeDB:
         return len(classifications)
 
 
-def make_posting(id, *, title=None, location=None, description_raw=None, classified_at=None, latest_version_observed_at=None):
+def make_posting(id, *, title=None, location=None, description_raw=None, classified_at=None, updated_at=None):
     return {
         "id": id,
         "title": title,
@@ -90,7 +90,7 @@ def make_posting(id, *, title=None, location=None, description_raw=None, classif
         "location_class": None,
         "seniority_class": None,
         "classified_at": classified_at,
-        "latest_version_observed_at": latest_version_observed_at,
+        "updated_at": updated_at,
     }
 
 
@@ -128,17 +128,17 @@ def test_skips_already_classified_postings_without_full(fake_db):
     assert fake_db.postings[1]["classified_at"] == T0
 
 
-def test_reclassifies_posting_with_a_version_newer_than_its_classification(fake_db):
+def test_reclassifies_posting_updated_after_classification(fake_db):
     # e.g. a Workday posting: classified once as "unknown" while its detail
-    # was still missing, then a later parse appends a new posting_versions
-    # row once the real description/location arrive — classified_at IS
-    # NULL alone would never see it again.
+    # was still missing, then a later parse writes the posting again once
+    # the real description/location arrive — classified_at IS NULL alone
+    # would never see it again.
     fake_db.postings[1] = make_posting(
         1,
         title="Graduate Software Engineer",
         location="United Kingdom, Edinburgh",
         classified_at=T0,
-        latest_version_observed_at=T1,
+        updated_at=T1,
     )
 
     summary = classify_run.run()
@@ -148,13 +148,13 @@ def test_reclassifies_posting_with_a_version_newer_than_its_classification(fake_
     assert fake_db.postings[1]["location_class"] == "uk"
 
 
-def test_does_not_reclassify_posting_with_no_newer_version(fake_db):
+def test_does_not_reclassify_posting_not_updated_since_classification(fake_db):
     fake_db.postings[1] = make_posting(
         1,
         title="Graduate Engineer",
         location="London, UK",
         classified_at=T1,
-        latest_version_observed_at=T0,  # version predates the classification
+        updated_at=T0,  # last written before the classification — nothing's changed since
     )
 
     summary = classify_run.run()
@@ -163,17 +163,42 @@ def test_does_not_reclassify_posting_with_no_newer_version(fake_db):
     assert fake_db.postings[1]["classified_at"] == T1  # untouched
 
 
-def test_does_not_reclassify_posting_with_no_versions_at_all(fake_db):
-    # latest_version_observed_at=None models no posting_versions row —
-    # LEFT JOIN LATERAL's NULL never counts as "newer than classified_at".
+def test_does_not_reclassify_posting_never_written(fake_db):
+    # updated_at=None models a row with no updated_at recorded at all —
+    # NULL is never "newer than" classified_at.
     fake_db.postings[1] = make_posting(
-        1, title="Graduate Engineer", location="London, UK", classified_at=T0, latest_version_observed_at=None
+        1, title="Graduate Engineer", location="London, UK", classified_at=T0, updated_at=None
     )
 
     summary = classify_run.run()
 
     assert summary["processed"] == 0
     assert fake_db.postings[1]["classified_at"] == T0
+
+
+def test_reparse_of_historical_data_triggers_reclassification_despite_old_version_timestamps(fake_db):
+    # The exact bug this column exists to fix: re-parsing an OLD
+    # raw_fetches row (a --full rebuild, or any backfill) produces
+    # posting_versions rows whose observed_at is old — it's the raw row's
+    # own fetched_at, when the data was *collected*, which can be
+    # arbitrarily far in the past relative to when it's being *processed*
+    # right now. A staleness check keyed on that timestamp would see an
+    # "old" version next to an existing classified_at and wrongly treat
+    # the posting as already up to date. updated_at is set to real write
+    # time on every upsert regardless of how old the source data is, so a
+    # historical re-parse still correctly looks freshly written.
+    fake_db.postings[1] = make_posting(
+        1,
+        title="Graduate Engineer",
+        location="London, UK",
+        classified_at=T0,
+        updated_at=T1,  # written just now, by today's re-parse of a historical raw row
+    )
+
+    summary = classify_run.run()
+
+    assert summary["processed"] == 1
+    assert fake_db.postings[1]["classified_at"] != T0
 
 
 def test_full_reclassifies_everything(fake_db):
@@ -189,13 +214,13 @@ def test_full_reclassifies_everything(fake_db):
     assert fake_db.postings[1]["classified_at"] != T0
 
 
-def test_full_returns_everything_regardless_of_version_freshness(fake_db):
-    # --full must bypass the new version-freshness check the same way it
-    # already bypasses classified_at IS NULL — a posting with no newer
-    # version (which would be skipped without --full) still gets
-    # reclassified once --full is passed.
+def test_full_returns_everything_regardless_of_updated_at(fake_db):
+    # --full must bypass the updated_at freshness check the same way it
+    # already bypasses classified_at IS NULL — a posting not updated since
+    # its classification (which would be skipped without --full) still
+    # gets reclassified once --full is passed.
     fake_db.postings[1] = make_posting(
-        1, title="Graduate Engineer", location="London, UK", classified_at=T1, latest_version_observed_at=T0
+        1, title="Graduate Engineer", location="London, UK", classified_at=T1, updated_at=T0
     )
 
     summary = classify_run.run(full=True)

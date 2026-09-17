@@ -220,10 +220,18 @@ class FakeDB:
                     "is_open": True,
                     "closed_at": None,
                     "content_hash": p.content_hash,
+                    "updated_at": datetime.now(UTC),
                 }
                 self._next_id += 1
                 self.postings[key] = row
             else:
+                # Mirrors db.bulk_upsert_postings's ON CONFLICT CASE: only
+                # bump updated_at when content_hash actually changes — real
+                # write time (datetime.now(UTC)), never observed_at, same
+                # reasoning as the INSERT branch above. A reappear-unchanged
+                # upsert (last_seen_at only) must leave it alone, or every
+                # open posting looks freshly updated on every run.
+                content_changed = row["content_hash"] != p.content_hash
                 row["title"] = p.title
                 row["location"] = p.location
                 row["department"] = p.department
@@ -231,6 +239,8 @@ class FakeDB:
                 row["last_seen_at"] = observed_at
                 row["is_open"] = True
                 row["content_hash"] = p.content_hash
+                if content_changed:
+                    row["updated_at"] = datetime.now(UTC)
             result[p.external_id] = row["id"]
         if commit:
             self.commit()
@@ -376,6 +386,41 @@ def test_content_change_appends_new_version_only_for_changed_posting(fake_db):
     assert posting1["title"] == "Senior Graduate Engineer"
     versions_for_1 = [v for v in fake_db.posting_versions if v["posting_id"] == posting1["id"]]
     assert len(versions_for_1) == 2
+
+
+# --- updated_at: bumped only on genuine content change, not every upsert ---
+#
+# get_postings_to_classify (see test_classify_run.py) treats updated_at >
+# classified_at as "needs reclassification" — these two tests cover the
+# write side (does updated_at actually change); test_classify_run.py's
+# test_does_not_reclassify_posting_not_updated_since_classification and
+# test_reclassifies_posting_updated_after_classification cover the read
+# side. Together: an unchanged posting's updated_at never moves, so it's
+# never picked up for reclassification; a changed one's does, so it is.
+
+
+def test_reobserving_unchanged_posting_does_not_bump_updated_at(fake_db):
+    process(fake_db, make_row(1, gh_payload([gh_job(1, "Graduate Engineer")]), T0))
+    updated_at_before = fake_db.postings[("greenhouse", "acme", "1")]["updated_at"]
+
+    t1 = T0 + timedelta(days=1)
+    process(fake_db, make_row(2, gh_payload([gh_job(1, "Graduate Engineer")]), t1))  # identical content
+
+    posting = fake_db.postings[("greenhouse", "acme", "1")]
+    assert posting["last_seen_at"] == t1  # it was re-observed...
+    assert posting["updated_at"] == updated_at_before  # ...but updated_at is untouched
+
+
+def test_content_change_bumps_updated_at(fake_db):
+    process(fake_db, make_row(1, gh_payload([gh_job(1, "Graduate Engineer")]), T0))
+    updated_at_before = fake_db.postings[("greenhouse", "acme", "1")]["updated_at"]
+
+    t1 = T0 + timedelta(days=1)
+    process(fake_db, make_row(2, gh_payload([gh_job(1, "Senior Graduate Engineer")]), t1))  # title changed
+
+    posting = fake_db.postings[("greenhouse", "acme", "1")]
+    assert posting["updated_at"] != updated_at_before
+    assert posting["updated_at"] > updated_at_before
 
 
 def test_close_detection_marks_missing_posting_closed(fake_db):

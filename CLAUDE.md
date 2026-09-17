@@ -102,6 +102,52 @@ Postings are observed over time, not stored once:
   `raw_fetches.company`. Any future code that compares a companies.yaml token
   against a plain company-identity string needs the same `str()` normalisation
   — never compare a raw token to a string directly.
+- `detail_run.py` only fetches a Workday posting's detail if its title looks
+  early-careers (`is_early_careers_title` — graduate, intern, internship,
+  junior, campus, placement, trainee, apprentice, new grad, summer analyst,
+  early career, entry level, scheme, programme/program, or a bare `20XX`
+  year), gated per board by `WorkdayToken.detail_filter` in companies.yaml
+  (default on). This exists because a general board (e.g. Barclays, ~971
+  postings) is mostly not early-careers, unlike a graduate-only board (e.g.
+  Lloyds, 36 postings, all relevant, `detail_filter: false`) — fetching
+  every posting's detail on a general board wastes most of a run's request
+  budget on postings that end up classified "experienced" anyway. The
+  pattern is deliberately over-inclusive on purpose, not just in the code
+  comment: a false positive costs one `fetch_detail()` request, a false
+  negative means a graduate role never gets a description and defaults to
+  "experienced" forever. **Tradeoff to know about:** a filtered board can
+  still miss a genuine early-careers posting whose title doesn't signal
+  it at all (an unusually-named graduate scheme, a role titled just
+  "Analyst" with no other qualifier) — the filter only ever reduces false
+  negatives to "titles the pattern doesn't recognise", it doesn't eliminate
+  them. `detail_filter: false` is the escape hatch for a board where this
+  matters enough to just fetch everything.
+- Separately, a Workday board itself can be filtered *server-side*, at the
+  list-fetch level, via `WorkdayToken.facets` — a mapping of facet
+  parameter (`workerSubType`, occasionally `jobFamilyGroup` or
+  `jobFamily`) to a list of ids, sent as the request body's
+  `appliedFacets`. Verified on Barclays: its 973-posting board returns
+  exactly 153 when filtered to Graduate/Intern/Apprentice `workerSubType`
+  ids, and every result is a genuine graduate programme — this is the
+  employer's own classification, not a title guess. Facet ids are opaque
+  and tenant-specific; they must only ever come from companies.yaml,
+  discovered per board with `scripts/probe_facets.py` — never inferred or
+  guessed, never reused across boards. Defaults to `{}` (unfiltered), so
+  this is purely additive — a board with no `facets:` entry behaves
+  exactly as before this existed.
+  **Tradeoff to know about:** this is server-side *pre*-filtering of the
+  whole feed, not a display filter — a facet-filtered board is no longer a
+  complete feed at all, so close-detection is weaker for it. A posting
+  whose employer reclassifies its `workerSubType` (e.g. a scheme
+  regraded from "Graduate" to "Experienced Hire" mid-posting) drops out of
+  every future filtered fetch and looks exactly like a closure, even
+  though the requisition may still be open under a different subtype.
+  This is rarer than an ordinary title edit, so a facet-filtered feed is
+  more stable than a `searchText`-based filter would be — but it's a real,
+  standing caveat on lifecycle data (`is_open`/`closed_at`) for any board
+  with `facets:` configured, distinct from the title-filter tradeoff above
+  (which only affects whether a description gets fetched, never identity
+  or closure).
 - `location_class`/`seniority_class`/`classified_at` tag a posting; they
   never cause one to be closed or deleted. Classification is a separate pass
   over `postings` (`classify_run.py`), same shape as parsing over
@@ -176,11 +222,37 @@ Postings are observed over time, not stored once:
   `description_raw = None`. This used to mean it stayed misclassified
   forever, since classification only ran once (`classified_at IS NULL`) —
   fixed by `get_postings_to_classify` also picking up any posting whose
-  latest `posting_versions.observed_at` is newer than its `classified_at`
-  (a stale classification, not just a missing one). Not Workday-specific:
-  the same gap applies to any source where a company edits a posting's
-  title or location after it was first seen. `--full` still reclassifies
-  everything unconditionally, version freshness included.
+  `postings.updated_at` is newer than its `classified_at` (a stale
+  classification, not just a missing one). Not Workday-specific: the same
+  gap applies to any source where a company edits a posting's title or
+  location after it was first seen. `--full` still reclassifies everything
+  unconditionally, `updated_at` freshness included.
+- `postings.updated_at` is set to `now()` by `bulk_upsert_postings`, but
+  ONLY when this posting's content actually changed (an insert, or an
+  update whose incoming content_hash differs from what's stored) — real
+  wall-clock write time, never `posting_versions.observed_at` (the raw
+  row's own `fetched_at`, i.e. when the data was *collected*). The
+  staleness check above deliberately compares against `updated_at`, not
+  `observed_at`: an earlier version compared against `observed_at`, and
+  re-parsing an *old* raw_fetches row (a `--full` rebuild, or any backfill)
+  produced a version whose `observed_at` was old even though the write was
+  happening right now — that looked already-up-to-date next to an existing
+  `classified_at` and got silently skipped, leaving a stale classification
+  no future run would ever correct. `updated_at` can't have this problem:
+  it's always the actual time of the write, regardless of how old the
+  source data being written is.
+  The content-changed guard is itself a fix for a second incident: an
+  earlier version of this column bumped `updated_at` on *every* upsert,
+  including a plain re-observation that only refreshes `last_seen_at` —
+  which meant every open posting looked freshly updated on every single
+  run, turning "reclassify what changed" into "reclassify all ~21k
+  postings every run" in production. The guard evaluates
+  `postings.content_hash IS DISTINCT FROM EXCLUDED.content_hash` directly
+  in the `ON CONFLICT DO UPDATE` clause — the same content_hash-equality
+  signal `process_row` already uses to decide whether to append a
+  `posting_versions` row, just checked against the table's own pre-update
+  value instead of being threaded through as a second parameter, so it
+  can't drift out of sync with what's actually stored.
 
 ## Constraints
 - Job description text is the companies' copyright. Store privately, never

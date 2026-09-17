@@ -75,12 +75,14 @@ CREATE TABLE IF NOT EXISTS postings (
     location_class TEXT,
     seniority_class TEXT,
     classified_at TIMESTAMPTZ,
+    updated_at TIMESTAMPTZ,
     UNIQUE (source, company, external_id)
 );
 CREATE INDEX IF NOT EXISTS postings_source_company_idx ON postings (source, company);
 ALTER TABLE postings ADD COLUMN IF NOT EXISTS location_class TEXT;
 ALTER TABLE postings ADD COLUMN IF NOT EXISTS seniority_class TEXT;
 ALTER TABLE postings ADD COLUMN IF NOT EXISTS classified_at TIMESTAMPTZ;
+ALTER TABLE postings ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;
 CREATE INDEX IF NOT EXISTS postings_classified_at_idx ON postings (classified_at);
 
 CREATE TABLE IF NOT EXISTS posting_versions (
@@ -169,7 +171,11 @@ def get_postings_missing_detail(conn: psycopg.Connection, *, source: str) -> lis
     over the same payload shape; a change to one without the other would
     silently desync which postings this considers "already fetched".
 
-    Returns [{"company", "external_id", "external_path"}, ...].
+    title is included so detail_run.py can apply its early-careers title
+    filter without a second query — it's the same raw list-item title
+    parse.workday.extract() reads, not anything derived.
+
+    Returns [{"company", "external_id", "external_path", "title"}, ...].
     """
     with conn.cursor() as cur:
         cur.execute(
@@ -184,10 +190,11 @@ def get_postings_missing_detail(conn: psycopg.Connection, *, source: str) -> lis
                 SELECT
                     company,
                     COALESCE(item->'bulletFields'->>0, item->>'externalPath') AS external_id,
-                    item->>'externalPath' AS external_path
+                    item->>'externalPath' AS external_path,
+                    item->>'title' AS title
                 FROM latest_fetch, jsonb_array_elements(payload) AS item
             )
-            SELECT li.company, li.external_id, li.external_path
+            SELECT li.company, li.external_id, li.external_path, li.title
             FROM list_items li
             LEFT JOIN raw_details rd
                 ON rd.source = %s AND rd.company = li.company AND rd.external_id = li.external_id
@@ -365,12 +372,33 @@ def bulk_upsert_postings(
 
     first_seen_at is set only in the INSERT branch, never touched on update.
     closed_at is never touched here either — it's only ever written once, by
-    close_missing_postings. Returns {external_id: posting_id}.
+    close_missing_postings.
+
+    updated_at is set to now() — real wall-clock write time, never
+    observed_at (the raw row's fetched_at, i.e. when the data was
+    *collected* — see CLAUDE.md for why get_postings_to_classify's
+    staleness check needs write time instead) — but ONLY when this
+    posting's content actually changed: an insert (a genuinely new
+    posting), or an update whose incoming content_hash differs from what
+    was already stored. An update that only refreshes last_seen_at because
+    the posting simply reappeared unchanged in today's feed leaves
+    updated_at untouched. This is the same signal process_row already uses
+    to decide whether to append a posting_versions row (content_hash
+    equality), just evaluated here directly against the table's own
+    pre-update value (postings.content_hash IS DISTINCT FROM
+    EXCLUDED.content_hash) rather than threaded through as a second
+    parameter — self-contained, and can't drift out of sync with what's
+    actually stored. Without this, updated_at bumping on every single
+    upsert turned classification from "reclassify what changed" into "in
+    practice, reclassify the entire postings table every run" — a real
+    incident (~21k postings) this guard exists to prevent, see CLAUDE.md.
+
+    Returns {external_id: posting_id}.
     """
     result: dict[str, int] = {}
 
     for chunk in _chunked(postings, CHUNK_SIZE):
-        values_sql = ", ".join(["(%s, %s, %s, %s, %s, %s, %s, %s, %s, true, %s)"] * len(chunk))
+        values_sql = ", ".join(["(%s, %s, %s, %s, %s, %s, %s, %s, %s, true, %s, now())"] * len(chunk))
         params: list[Any] = []
         for p in chunk:
             params.extend(
@@ -393,7 +421,7 @@ def bulk_upsert_postings(
                 f"""
                 INSERT INTO postings (
                     source, company, external_id, title, location, department, url,
-                    first_seen_at, last_seen_at, is_open, content_hash
+                    first_seen_at, last_seen_at, is_open, content_hash, updated_at
                 )
                 VALUES {values_sql}
                 ON CONFLICT (source, company, external_id) DO UPDATE SET
@@ -403,7 +431,11 @@ def bulk_upsert_postings(
                     url = EXCLUDED.url,
                     last_seen_at = EXCLUDED.last_seen_at,
                     is_open = true,
-                    content_hash = EXCLUDED.content_hash
+                    content_hash = EXCLUDED.content_hash,
+                    updated_at = CASE
+                        WHEN postings.content_hash IS DISTINCT FROM EXCLUDED.content_hash THEN now()
+                        ELSE postings.updated_at
+                    END
                 RETURNING external_id, id
                 """,
                 params,
@@ -572,27 +604,39 @@ def get_postings_to_classify(conn: psycopg.Connection, *, full: bool = False) ->
     whether the posting is still live.
 
     "Needing classification" is classified_at IS NULL (never classified)
-    OR the latest posting_versions.observed_at is strictly after
-    classified_at (classified once, but content has changed since — a
-    stale classification, not a missing one). The second case matters for
-    any source where a posting's content can legitimately change after it
-    was first classified, not just Workday: a two-stage source whose
-    description/location arrive after the posting's first parse is the
-    common trigger (parse runs before detail_run in pipeline.py, so a new
-    Workday posting's first version is created empty, gets classified as
-    "unknown", and its real content lands in a later version — one that,
-    without this OR clause, classified_at IS NULL would never see again).
-    But an ordinary source editing a posting's title after the fact hits
-    the exact same gap; this isn't Workday-specific.
+    OR postings.updated_at is strictly after classified_at (classified
+    once, but the row has been written since — a stale classification, not
+    a missing one). The second case matters for any source where a
+    posting's content can legitimately change after it was first
+    classified, not just Workday: a two-stage source whose description/
+    location arrive after the posting's first parse is the common trigger
+    (parse runs before detail_run in pipeline.py, so a new Workday
+    posting's first version is created empty, gets classified as
+    "unknown", and its real content lands in a later version). But an
+    ordinary source editing a posting's title after the fact hits the same
+    gap; this isn't Workday-specific.
+
+    This compares against updated_at (bulk_upsert_postings sets it to
+    now() on every upsert), NOT posting_versions.observed_at, which is
+    the raw row's own fetched_at — when the data was *collected*, not when
+    it was *processed*. Comparing against observed_at silently broke
+    reclassification for exactly the case that matters most: re-parsing
+    old raw_fetches rows (a --full rebuild, or any backfill) produces
+    version rows whose observed_at is old, even though the write to
+    postings/posting_versions is happening right now — those looked
+    older than classified_at and were skipped, leaving stale
+    classifications no future run would ever correct. updated_at is real
+    write time regardless of how old the source data is, so this can't
+    happen again.
     """
-    where_clause = "" if full else "WHERE p.classified_at IS NULL OR pv.observed_at > p.classified_at"
+    where_clause = "" if full else "WHERE p.classified_at IS NULL OR p.updated_at > p.classified_at"
     with conn.cursor() as cur:
         cur.execute(
             f"""
             SELECT p.id, p.title, p.location, pv.description_raw
             FROM postings p
             LEFT JOIN LATERAL (
-                SELECT description_raw, observed_at
+                SELECT description_raw
                 FROM posting_versions
                 WHERE posting_id = p.id
                 ORDER BY observed_at DESC

@@ -1,0 +1,26 @@
+{
+  "total": 3,
+  "jobPostings": [
+    {
+      "title": "2026 Graduate Programme - Technology",
+      "externalPath": "/job/London-GB/2026-Graduate-Programme---Technology_JR-0012345",
+      "locationsText": "London, UK",
+      "postedOn": "Posted 5 Days Ago",
+      "bulletFields": ["JR-0012345"]
+    },
+    {
+      "title": "Summer Internship 2026 - Markets",
+      "externalPath": "/job/London-GB/Summer-Internship-2026---Markets_JR-0012346",
+      "locationsText": "London, UK",
+      "postedOn": "Posted Today",
+      "bulletFields": ["JR-0012346"]
+    },
+    {
+      "title": "Apprenticeship - Software Engineering",
+      "externalPath": "/job/Glasgow-GB/Apprenticeship---Software-Engineering_JR-0012347",
+      "locationsText": "Glasgow, UK",
+      "postedOn": "Posted 2 Days Ago",
+      "bulletFields": ["JR-0012347"]
+    }
+  ]
+}

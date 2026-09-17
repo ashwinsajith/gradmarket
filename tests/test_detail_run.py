@@ -8,8 +8,11 @@ from gradmarket.sources.workday import DetailResult
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
 
-def candidate(company="example", external_id="JR0001", external_path="/job/j1"):
-    return {"company": company, "external_id": external_id, "external_path": external_path}
+def candidate(company="example", external_id="JR0001", external_path="/job/j1", title="Graduate Software Engineer"):
+    # title defaults to something the early-careers filter matches, so
+    # every pre-existing test here (about pacing/limits/insertion, not
+    # filtering) is unaffected by the filter's default-on behaviour.
+    return {"company": company, "external_id": external_id, "external_path": external_path, "title": title}
 
 
 class FakeDB:
@@ -64,7 +67,13 @@ def test_run_fetches_each_candidate_and_records_detail(monkeypatch):
 
     summary = detail_run.run()
 
-    assert summary == {"attempted": 2, "succeeded": 2, "failed": 0, "skipped_unconfigured": 0}
+    assert summary == {
+        "attempted": 2,
+        "succeeded": 2,
+        "failed": 0,
+        "skipped_unconfigured": 0,
+        "skipped_filtered": 0,
+    }
     assert len(fake.inserted) == 2
     assert fake.inserted[0]["http_status"] == 200
     assert fake.inserted[0]["source"] == "workday"
@@ -138,7 +147,13 @@ def test_run_skips_company_with_no_companies_yaml_entry(monkeypatch):
 
     summary = detail_run.run()
 
-    assert summary == {"attempted": 0, "succeeded": 0, "failed": 0, "skipped_unconfigured": 1}
+    assert summary == {
+        "attempted": 0,
+        "succeeded": 0,
+        "failed": 0,
+        "skipped_unconfigured": 1,
+        "skipped_filtered": 0,
+    }
     assert calls == []
     assert fake.inserted == []
 
@@ -164,3 +179,140 @@ def test_skipped_candidate_does_not_consume_sleep_or_limit_budget(monkeypatch):
     assert summary["skipped_unconfigured"] == 1
     assert len(calls) == 1
     assert sleeps == []  # only one actual request made — no gap to pace
+
+
+# --- is_early_careers_title: the pure filter function ---
+
+
+def test_is_early_careers_title_matches_each_keyword():
+    for title in [
+        "Graduate Software Engineer",
+        "Summer Intern",
+        "Marketing Internship",
+        "Junior Developer",
+        "Campus Hire",
+        "Industrial Placement",
+        "Graduate Trainee",
+        "Software Apprentice",
+        "New Grad Software Engineer",
+        "Summer Analyst",
+        "Early Career Software Engineer",
+        "Entry Level Analyst",
+        "Graduate Scheme",
+        "2026 Graduate Programme",
+        "Software Engineering Program",
+    ]:
+        assert detail_run.is_early_careers_title(title) is True, title
+
+
+def test_is_early_careers_title_matches_bare_year():
+    assert detail_run.is_early_careers_title("Early Careers 2027") is True
+
+
+def test_is_early_careers_title_rejects_ordinary_senior_title():
+    assert detail_run.is_early_careers_title("Senior Relationship Manager") is False
+    assert detail_run.is_early_careers_title("Head of Engineering") is False
+
+
+def test_is_early_careers_title_missing_title_is_treated_as_a_match():
+    # No signal either way — fetch rather than risk silently never getting
+    # a real graduate role's description.
+    assert detail_run.is_early_careers_title(None) is True
+    assert detail_run.is_early_careers_title("") is True
+
+
+# --- detail_filter wiring into run() ---
+
+
+def test_non_matching_title_is_filtered_out_without_fetching(monkeypatch):
+    candidates = [candidate(title="Senior Relationship Manager")]
+    calls = []
+
+    def fake_fetch_detail(tenant, dc, site, external_path):
+        calls.append(1)
+        return DetailResult(status_code=200, payload={})
+
+    fake, _sleeps = setup(monkeypatch, candidates, fake_fetch_detail)
+
+    summary = detail_run.run()
+
+    assert summary == {
+        "attempted": 0,
+        "succeeded": 0,
+        "failed": 0,
+        "skipped_unconfigured": 0,
+        "skipped_filtered": 1,
+    }
+    assert calls == []
+    assert fake.inserted == []
+
+
+def test_matching_title_is_fetched(monkeypatch):
+    candidates = [candidate(title="2026 Graduate Programme")]
+    calls = []
+
+    def fake_fetch_detail(tenant, dc, site, external_path):
+        calls.append(1)
+        return DetailResult(status_code=200, payload={})
+
+    _fake, _sleeps = setup(monkeypatch, candidates, fake_fetch_detail)
+
+    summary = detail_run.run()
+
+    assert summary["attempted"] == 1
+    assert summary["skipped_filtered"] == 0
+    assert calls == [1]
+
+
+def test_missing_title_candidate_is_fetched_not_filtered(monkeypatch):
+    candidates = [candidate(title=None)]
+    calls = []
+
+    def fake_fetch_detail(tenant, dc, site, external_path):
+        calls.append(1)
+        return DetailResult(status_code=200, payload={})
+
+    _fake, _sleeps = setup(monkeypatch, candidates, fake_fetch_detail)
+
+    summary = detail_run.run()
+
+    assert summary["attempted"] == 1
+    assert summary["skipped_filtered"] == 0
+
+
+def test_filtered_candidate_does_not_consume_sleep_budget(monkeypatch):
+    candidates = [
+        candidate(external_id="JR0000", title="Senior Relationship Manager"),
+        candidate(external_id="JR0001", title="Graduate Analyst"),
+    ]
+    calls = []
+
+    def fake_fetch_detail(tenant, dc, site, external_path):
+        calls.append(1)
+        return DetailResult(status_code=200, payload={})
+
+    _fake, sleeps = setup(monkeypatch, candidates, fake_fetch_detail)
+
+    summary = detail_run.run()
+
+    assert summary["attempted"] == 1
+    assert summary["skipped_filtered"] == 1
+    assert sleeps == []  # only one real request made — no gap to pace
+
+
+def test_detail_filter_false_fetches_regardless_of_title(monkeypatch):
+    candidates = [candidate(title="Senior Relationship Manager")]
+    calls = []
+
+    def fake_fetch_detail(tenant, dc, site, external_path):
+        calls.append(1)
+        return DetailResult(status_code=200, payload={})
+
+    _fake, _sleeps = setup(monkeypatch, candidates, fake_fetch_detail)
+    monkeypatch.setenv("COMPANIES_FILE", str(FIXTURES / "companies_workday_no_filter_test.yaml"))
+
+    summary = detail_run.run()
+
+    assert summary["attempted"] == 1
+    assert summary["skipped_filtered"] == 0
+    assert calls == [1]
