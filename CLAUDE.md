@@ -39,6 +39,42 @@ Postings are observed over time, not stored once:
   since the last successful fetch — but only when that previous fetch had at
   least 10 postings. Below that, a real drop looks identical to a collapse,
   so small boards are never guarded.
+- The guard's baseline (`db.get_previous_raw_payload`) is the most recent
+  fetch from a calendar day strictly *before* the row being checked — never
+  simply "the previous row". `ingest.py` running more than once in a day
+  (a manual retry, a re-run after a partial failure) must not let a
+  same-day fetch become its own baseline. This is exactly how Deliveroo's
+  real 225→11 closure went undetected: ingest ran twice that day, so the
+  guard compared the second same-day fetch (11) against the first
+  (also 11, already post-drop) instead of against the prior day's 225, and
+  the ratio test saw no drop at all.
+- A tripped guard writes a durable row to `feed_anomalies` (source,
+  company, previous_count — nullable, since the empty-feed branch can trip
+  with no prior observation to compare against at all — current_count,
+  detected_at), not just a log line. Close-detection still skips for that
+  company on that run regardless — this table doesn't change that — but a
+  tripped guard is exactly the case where the drop might be genuine (as
+  Deliveroo's was: all 202 closures were real), so it needs a human to
+  review and act on, not scroll past in a log that nobody re-reads.
+  Two things keep this table meaningful rather than noisy:
+  - `parse_run._is_steady_state_empty` skips the write entirely when
+    previous_count and current_count are both 0 — a board with no live
+    postings on two runs running isn't an event, it's steady state (this
+    produced 30 identical 0->0 rows per run before the guard existed). A
+    board's *first-ever* observation coming back empty (previous_count is
+    `None`, not `0`) is still recorded — that's new information, not an
+    established steady state yet.
+  - A unique index on `(source, company, (detected_at AT TIME ZONE 'UTC')::date)`
+    plus `insert_feed_anomaly`'s matching `ON CONFLICT DO NOTHING` caps it at
+    one row per company per calendar day — ingest.py running twice in a day
+    (see the baseline note above, same root cause) must not write two
+    anomaly rows for what's really one trip. Plain `detected_at::date`
+    fails schema init outright ("functions in index expression must be
+    marked IMMUTABLE" — a bare timestamptz->date cast depends on the
+    session's `TimeZone` setting); casting through an explicit zone first
+    pins it to a fixed offset, which Postgres accepts. Verified directly
+    against Railway Postgres, not just unit tests — this class of error
+    only surfaces against a real database (`scripts/smoke_db.py`).
 - NEVER delete a posting row. Disappearance is data.
 - `posting_versions` appends a row only when the content hash changes.
 - Lever's `raw_fetches.payload` is a concatenation of paginated responses, not
@@ -281,6 +317,20 @@ Postings are observed over time, not stored once:
   own re-extraction of the *previous* raw payload goes through the same
   context-aware path, for the same reason: a two-stage extractor can't take
   a bare payload at all, guard comparison included.
+- `parse_run.run()`'s main loop pre-filters two kinds of row before ever
+  calling `process_row`, both handled the same way (warn naming source and
+  company, leave `parsed_at` unset so it's retried automatically if the
+  situation is fixed, `continue` — never raise): a source with no
+  registered extractor at all, and — for a `NEEDS_DETAILS` source — a
+  company with no companies.yaml entry (`_find_configured_token` returns
+  `None`). The second case is `_build_extractor_context` raising a
+  `ValueError` in production once already: a Workday board dropped from
+  companies.yaml while unparsed raw_fetches rows for it still existed took
+  down the *entire* parse run, not just that one board's rows. Calling
+  `process_row` directly (as tests do) still raises for a missing token —
+  that raise is intentional, a clear error for a caller that bypassed the
+  loop's own filtering — but `run()` itself must never let one dropped
+  company reach it.
 
 ## Long-running operations
 - Do not execute `parse_run --full`, full ingests, or anything expected to

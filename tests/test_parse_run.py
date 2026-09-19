@@ -91,6 +91,7 @@ class FakeDB:
         # {(source, company, external_id): payload} — seeded directly by
         # tests that need a two-stage extractor's context populated.
         self.raw_details: dict[tuple[str, str, str], object] = {}
+        self.feed_anomalies: list[dict] = []
 
     # --- connection / transaction control ---
 
@@ -121,13 +122,19 @@ class FakeDB:
 
     def rollback(self):
         if self._snapshot is not None:
-            self.postings, self.posting_versions, self.raw_fetches_history, self._next_id = self._snapshot
+            (
+                self.postings,
+                self.posting_versions,
+                self.raw_fetches_history,
+                self._next_id,
+                self.feed_anomalies,
+            ) = self._snapshot
             self._snapshot = None
 
     def _ensure_snapshot(self):
         if self._snapshot is None:
             self._snapshot = copy.deepcopy(
-                (self.postings, self.posting_versions, self.raw_fetches_history, self._next_id)
+                (self.postings, self.posting_versions, self.raw_fetches_history, self._next_id, self.feed_anomalies)
             )
 
     # --- schema / unparsed lookup ---
@@ -172,17 +179,35 @@ class FakeDB:
     # --- parsing ---
 
     def get_previous_raw_payload(self, conn, *, source, company, before):
+        # Mirrors db.get_previous_raw_payload: baseline is the most recent
+        # fetch from a calendar day strictly before `before`'s, not simply
+        # any earlier timestamp — a same-day second fetch must never become
+        # its own baseline (see that function's docstring).
         candidates = [
             r
             for r in self.raw_fetches_history
             if r["source"] == source
             and r["company"] == company
-            and r["fetched_at"] < before
+            and r["fetched_at"].date() < before.date()
             and r["payload"] is not None
         ]
         if not candidates:
             return None
         return max(candidates, key=lambda r: r["fetched_at"])["payload"]
+
+    def insert_feed_anomaly(self, conn, *, source, company, previous_count, current_count, commit=True):
+        if not commit:
+            self._ensure_snapshot()
+        self.feed_anomalies.append(
+            {
+                "source": source,
+                "company": company,
+                "previous_count": previous_count,
+                "current_count": current_count,
+            }
+        )
+        if commit:
+            self.commit()
 
     def get_existing_posting_hashes(self, conn, *, source, company):
         return {
@@ -476,6 +501,94 @@ def test_shrink_guard_applies_at_min_previous_count_and_over_ratio(fake_db, caps
     assert "guard tripped" in capsys.readouterr().out
 
 
+def test_same_day_second_fetch_uses_prior_day_as_baseline(fake_db, capsys):
+    # The Deliveroo incident: ingest ran twice in one day. Without the fix,
+    # the second same-day fetch would compare against the first (both
+    # already showing the post-drop count), making a genuine 225->11
+    # collapse invisible to the ratio test. Fixed dates, not the module's
+    # real-"now"-anchored T0, since this specifically needs two fetches on
+    # the *same* calendar day — a `timedelta(hours=...)` offset from a
+    # real-time anchor could flakily cross midnight.
+    day1 = datetime(2026, 1, 1, 9, 0, tzinfo=UTC)
+    process(fake_db, make_row(1, gh_payload([gh_job(i, f"Job {i}") for i in range(1, 226)]), day1))  # 225
+
+    day2_morning = datetime(2026, 1, 2, 9, 0, tzinfo=UTC)
+    process(fake_db, make_row(2, gh_payload([gh_job(i, f"Job {i}") for i in range(1, 12)]), day2_morning))  # 11
+
+    day2_evening = datetime(2026, 1, 2, 21, 0, tzinfo=UTC)  # same calendar day, later re-run
+    process(fake_db, make_row(3, gh_payload([gh_job(i, f"Job {i}") for i in range(1, 12)]), day2_evening))  # still 11
+
+    # Both day-2 runs must see the drop against day 1's 225 — if the second
+    # run had compared against the first (11 vs 11, no drop), only one
+    # "guard tripped" line would appear instead of two.
+    assert capsys.readouterr().out.count("guard tripped") == 2
+
+
+def test_tripped_guard_writes_feed_anomaly_row(fake_db):
+    process(fake_db, make_row(1, gh_payload([gh_job(i, f"Job {i}") for i in range(1, 21)]), T0))  # 20
+
+    t1 = T0 + timedelta(days=1)
+    process(fake_db, make_row(2, gh_payload([gh_job(i, f"Job {i}") for i in range(1, 6)]), t1))  # 5 (75% drop)
+
+    assert len(fake_db.feed_anomalies) == 1
+    anomaly = fake_db.feed_anomalies[0]
+    assert anomaly["source"] == "greenhouse"
+    assert anomaly["company"] == "acme"
+    assert anomaly["previous_count"] == 20
+    assert anomaly["current_count"] == 5
+
+
+def test_no_feed_anomaly_row_when_guard_not_tripped(fake_db):
+    process(fake_db, make_row(1, gh_payload([gh_job(1, "A")]), T0))
+
+    t1 = T0 + timedelta(days=1)
+    process(fake_db, make_row(2, gh_payload([gh_job(1, "A"), gh_job(2, "B")]), t1))  # grew, no drop
+
+    assert fake_db.feed_anomalies == []
+
+
+def test_no_feed_anomaly_row_for_board_that_has_always_been_empty(fake_db, capsys):
+    # A board with zero postings on both this run and the last isn't an
+    # event, it's steady state — the guard still trips (an empty feed
+    # always trips) and close-detection still skips, but recording it
+    # produced one identical 0->0 row per run forever for a board that
+    # simply has no live postings.
+    process(fake_db, make_row(1, gh_payload([]), T0))  # first-ever observation, empty — still recorded once
+    assert len(fake_db.feed_anomalies) == 1
+
+    t1 = T0 + timedelta(days=1)
+    process(fake_db, make_row(2, gh_payload([]), t1))  # still empty — now steady state
+
+    assert "guard tripped" in capsys.readouterr().out  # still trips...
+    assert len(fake_db.feed_anomalies) == 1  # ...but no second row for the steady-state repeat
+
+
+def test_feed_anomaly_recorded_for_first_ever_empty_observation(fake_db):
+    # Distinct from the steady-state case above: previous_count is None
+    # here (no prior observation at all, not a prior zero), so this is
+    # still worth recording — a board's very first fetch coming back empty
+    # is new information, not steady state.
+    process(fake_db, make_row(1, gh_payload([]), T0))
+
+    assert len(fake_db.feed_anomalies) == 1
+    anomaly = fake_db.feed_anomalies[0]
+    assert anomaly["previous_count"] is None
+    assert anomaly["current_count"] == 0
+
+
+def test_feed_anomaly_recorded_when_board_goes_from_some_postings_to_empty(fake_db):
+    # previous_count > 0, current 0 — a real collapse, not steady state.
+    process(fake_db, make_row(1, gh_payload([gh_job(1, "A"), gh_job(2, "B")]), T0))
+
+    t1 = T0 + timedelta(days=1)
+    process(fake_db, make_row(2, gh_payload([]), t1))
+
+    assert len(fake_db.feed_anomalies) == 1
+    anomaly = fake_db.feed_anomalies[0]
+    assert anomaly["previous_count"] == 2
+    assert anomaly["current_count"] == 0
+
+
 def test_empty_feed_always_trips_guard_even_below_min_previous_count(fake_db, capsys):
     # only 3 previously — below the shrink-guard's min-previous threshold —
     # but an empty feed must still trip the guard unconditionally.
@@ -594,12 +707,41 @@ def test_workday_shrink_guard_previous_payload_uses_context_too(fake_db, monkeyp
 
 
 def test_workday_missing_companies_yaml_token_raises_clear_error(fake_db):
-    # fake_db's default COMPANIES_FILE (companies_parse_test.yaml) has no
-    # `workday:` section at all.
+    # process_row called directly (bypassing run()'s own pre-filtering,
+    # tested below) still raises a clear error rather than a confusing
+    # downstream AttributeError — fake_db's default COMPANIES_FILE
+    # (companies_parse_test.yaml) has no `workday:` section at all.
     row = make_row(1, [wd_item("JR0001", "A")], T0, source="workday", company="example")
 
     with pytest.raises(ValueError, match="no companies.yaml token found"):
         parse_run.process_row(fake_db, row)
+
+
+def test_run_skips_workday_row_for_dropped_company_and_continues(fake_db, monkeypatch, capsys):
+    # Regression: a two-stage source's company removed from companies.yaml
+    # (or renamed) while an unparsed raw_fetches row for it still exists
+    # used to make _build_extractor_context raise, aborting run() entirely
+    # — one dropped board must not break parsing for every other one.
+    monkeypatch.setenv("COMPANIES_FILE", str(FIXTURES / "companies_greenhouse_and_workday_test.yaml"))
+
+    workday_row = make_row(
+        1, [wd_item("JR0001", "Graduate Software Engineer")], T0, source="workday", company="dropped-company"
+    )
+    fake_db.raw_fetches_history.append(workday_row)
+    fake_db.raw_fetches_history.append(make_row(2, gh_payload([gh_job(1, "A")]), T0))
+
+    summary = parse_run.run()
+
+    assert summary["processed"] == 1  # only the greenhouse row
+    assert summary["skipped_missing_config"] == 1
+    posting = fake_db.postings[("greenhouse", "acme", "1")]
+    assert posting["is_open"] is True  # unaffected by the dropped workday board
+
+    assert workday_row["parsed_at"] is None  # left unparsed, retried automatically if reconfigured
+
+    out = capsys.readouterr().out
+    assert "no companies.yaml entry" in out
+    assert "workday/dropped-company" in out
 
 
 # --- description stripping from raw_fetches after a successful parse ---

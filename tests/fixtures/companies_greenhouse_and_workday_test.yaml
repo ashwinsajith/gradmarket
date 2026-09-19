@@ -1,0 +1,8 @@
+greenhouse:
+  - acme
+
+workday:
+  - company: example
+    tenant: example
+    dc: wd503
+    site: External

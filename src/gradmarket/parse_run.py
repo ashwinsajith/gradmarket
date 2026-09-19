@@ -32,6 +32,11 @@ from gradmarket.raw_fetches_pruning import strip_descriptions
 # trips it when the previous count was at least SHRINK_GUARD_MIN_PREVIOUS —
 # below that, a real drop on a small board looks identical to a collapse, and
 # guarding it would mean never detecting genuine closures on small boards.
+# The baseline itself is db.get_previous_raw_payload's most recent PRIOR-DAY
+# fetch, not simply the previous row — a same-day second ingest run must
+# never become its own baseline (see that function's docstring for the
+# Deliveroo incident this fixes: two same-day fetches both showing 11
+# postings made a real 225->11 drop invisible to the ratio test).
 SHRINK_GUARD_RATIO = 0.5
 SHRINK_GUARD_MIN_PREVIOUS = 10
 
@@ -57,6 +62,20 @@ def _guard_tripped(current_count: int, previous_count: int | None) -> bool:
     return False
 
 
+def _is_steady_state_empty(current_count: int, previous_count: int | None) -> bool:
+    """A board that's been empty for two runs running isn't an anomaly —
+    it's steady state (e.g. a company added with no live postings yet, or
+    one whose board has quietly emptied out and stayed that way). The
+    guard still trips (current_count == 0 always trips, see
+    _guard_tripped) and close-detection still skips, but recording it in
+    feed_anomalies every single run produced 30 identical 0->0 rows for
+    boards that have simply always been empty — not an event worth a
+    human's attention. previous_count is None (no prior observation at
+    all) is deliberately NOT steady state — a board's very first fetch
+    coming back empty is still worth recording."""
+    return previous_count == 0 and current_count == 0
+
+
 def _deduplicate_postings(postings: list, *, source: str, company: str) -> list:
     """Keep the last occurrence of each external_id. A payload with the same
     id twice makes bulk_upsert_postings's multi-row UPSERT try to update the
@@ -73,17 +92,34 @@ def _deduplicate_postings(postings: list, *, source: str, company: str) -> list:
     return list(by_id.values())
 
 
+def _find_configured_token(source: str, company: str) -> Any | None:
+    """The companies.yaml token for (source, company), matched by
+    str(token) == company — works for a bare-string token and a structured
+    one like WorkdayToken alike (see WorkdayToken.__str__), with no
+    source-specific knowledge of what a token looks like. None if this
+    company isn't (or is no longer) configured for this source at all —
+    e.g. its companies.yaml entry was removed while unparsed raw_fetches
+    rows for it still exist."""
+    companies = load_companies(resolve_companies_file())
+    return next((t for t in companies.get(source, []) if str(t) == company), None)
+
+
 def _build_extractor_context(conn: Any, *, source: str, company: str) -> ExtractorContext:
     """For a two-stage source (NEEDS_DETAILS = True) only — never called
     otherwise. Generic across any such source: fetches that company's
-    raw_details keyed by external_id, and looks up its companies.yaml token
-    by matching str(token) == company (every token type, bare string or
-    structured like WorkdayToken, answers that — see WorkdayToken.__str__),
-    not by any source-specific knowledge of what a token looks like."""
+    raw_details keyed by external_id, and looks up its companies.yaml
+    token via _find_configured_token.
+
+    Raises if no token is found. In practice run()'s loop already filters
+    these rows out before ever calling process_row (see its own
+    _find_configured_token check), so this should be unreachable from
+    there — this raise exists for a caller that invokes process_row
+    directly (as tests do) without that pre-filtering, where a clear error
+    is more useful than a confusing downstream AttributeError.
+    """
     details_by_external_id = db.get_raw_details_by_external_id(conn, source=source, company=company)
 
-    companies = load_companies(resolve_companies_file())
-    token = next((t for t in companies.get(source, []) if str(t) == company), None)
+    token = _find_configured_token(source, company)
     if token is None:
         raise ValueError(
             f"no companies.yaml token found for {source}/{company} — needed to build its extractor context"
@@ -174,6 +210,15 @@ def process_row(conn: Any, row: dict, *, dry_run: bool = False) -> dict:
             f"WARNING: {source}/{company}: feed guard tripped "
             f"({len(postings)} seen, {previous_count} previously) — skipping close-detection"
         )
+        if not _is_steady_state_empty(len(postings), previous_count):
+            db.insert_feed_anomaly(
+                conn,
+                source=source,
+                company=company,
+                previous_count=previous_count,
+                current_count=len(postings),
+                commit=commit,
+            )
     else:
         closed = db.close_missing_postings(
             conn,
@@ -281,6 +326,7 @@ def run(
     processed = 0
     skipped_failures = 0
     skipped_unsupported_source = 0
+    skipped_missing_config = 0
     totals = {"inserted": 0, "updated": 0, "closed": 0, "versions": 0}
 
     for row in rows:
@@ -300,6 +346,21 @@ def run(
                 f"leaving raw_fetches row {row['id']} unparsed"
             )
             skipped_unsupported_source += 1
+            continue
+        extractor = EXTRACTORS[row["source"]]
+        if extractor.NEEDS_DETAILS and _find_configured_token(row["source"], row["company"]) is None:
+            # A two-stage source's company was dropped from companies.yaml
+            # (or renamed) while unparsed raw_fetches rows for it still
+            # exist — _build_extractor_context would raise for this row.
+            # Same treatment as an unregistered extractor above: warn, skip,
+            # leave unparsed so it's retried automatically if the company
+            # is reconfigured. One dropped company must not abort parsing
+            # for every other board.
+            print(
+                f"WARNING: {row['source']}/{row['company']}: no companies.yaml entry for this company — "
+                f"leaving raw_fetches row {row['id']} unparsed"
+            )
+            skipped_missing_config += 1
             continue
         stats = process_row(conn, row, dry_run=dry_run)
         for key in totals:
@@ -328,6 +389,7 @@ def run(
         "processed": processed,
         "skipped_failures": skipped_failures,
         "skipped_unsupported_source": skipped_unsupported_source,
+        "skipped_missing_config": skipped_missing_config,
         "total_rows": len(rows),
         "dry_run": dry_run,
         "raw_fetches_deleted": raw_fetches_deleted,
@@ -391,6 +453,11 @@ def main() -> None:
         print(
             f"{prefix}skipped {summary['skipped_unsupported_source']} row(s) with no registered "
             f"extractor for their source — left unparsed for a future run"
+        )
+    if summary["skipped_missing_config"]:
+        print(
+            f"{prefix}skipped {summary['skipped_missing_config']} row(s) with no companies.yaml "
+            f"entry for their company — left unparsed for a future run"
         )
     print(
         f"{prefix}postings: {summary['postings_inserted']} inserted, "

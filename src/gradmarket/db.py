@@ -95,6 +95,30 @@ CREATE TABLE IF NOT EXISTS posting_versions (
     description_raw TEXT
 );
 CREATE INDEX IF NOT EXISTS posting_versions_posting_id_idx ON posting_versions (posting_id);
+
+CREATE TABLE IF NOT EXISTS feed_anomalies (
+    id BIGSERIAL PRIMARY KEY,
+    detected_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    source TEXT NOT NULL,
+    company TEXT NOT NULL,
+    previous_count INT,
+    current_count INT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS feed_anomalies_source_company_idx ON feed_anomalies (source, company);
+-- One row per (source, company, day): ingest.py running twice in a day must
+-- not write two anomaly rows for the same trip (see insert_feed_anomaly's
+-- ON CONFLICT DO NOTHING, which targets exactly this index).
+--
+-- Plain detected_at::date fails with "functions in index expression must be
+-- marked IMMUTABLE" — a bare timestamptz->date cast goes through the
+-- session's TimeZone setting, which can change, so Postgres won't accept it
+-- in an index. Casting through an explicit zone first (AT TIME ZONE 'UTC')
+-- pins the conversion to a fixed, session-independent offset, which
+-- Postgres does accept — verified directly against Railway Postgres 18.6
+-- (see scripts/smoke_db.py) before relying on it here, since this is
+-- exactly the class of error no unit test catches.
+CREATE UNIQUE INDEX IF NOT EXISTS feed_anomalies_source_company_date_idx
+    ON feed_anomalies (source, company, ((detected_at AT TIME ZONE 'UTC')::date));
 """
 
 
@@ -326,18 +350,81 @@ def reset_parsed_state(conn: psycopg.Connection, *, commit: bool = True) -> None
 def get_previous_raw_payload(
     conn: psycopg.Connection, *, source: str, company: str, before: Any
 ) -> Any | None:
-    """The payload of the most recent prior raw_fetches row for this company that had one."""
+    """The payload of the most recent raw_fetches row for this company from
+    a calendar day strictly before `before`'s — NOT simply the row
+    immediately prior by fetched_at.
+
+    This matters because ingest.py can run more than once in a day (a
+    manual retry, a re-run after a partial failure). If the baseline were
+    just "the previous row", a same-day second run would compare against
+    its own first run instead of the last real prior observation — this is
+    exactly how the parse_run shrink guard failed to catch Deliveroo
+    dropping 225 postings to 11: ingest ran twice that day, so the second
+    fetch was compared against the first (also 11), and the ratio test saw
+    no drop at all. Comparing by calendar day instead means a same-day
+    re-run can never become its own baseline.
+    """
     with conn.cursor() as cur:
         cur.execute(
             """
             SELECT payload FROM raw_fetches
-            WHERE source = %s AND company = %s AND fetched_at < %s AND payload IS NOT NULL
+            WHERE source = %s AND company = %s AND payload IS NOT NULL
+              AND fetched_at::date < %s::date
             ORDER BY fetched_at DESC
             LIMIT 1
             """,
             (source, company, before),
         )
         row = cur.fetchone()
+    return row[0] if row else None
+
+
+def insert_feed_anomaly(
+    conn: psycopg.Connection,
+    *,
+    source: str,
+    company: str,
+    previous_count: int | None,
+    current_count: int,
+    commit: bool = True,
+) -> int | None:
+    """Record a tripped parse_run shrink/empty-feed guard as a durable row,
+    not just a log line that scrolls past. Close-detection still skips for
+    this company on a tripped run — this table exists because a tripped
+    guard is exactly the case where a drop might be genuine (Deliveroo's
+    225->11 was a real mass-closure) and needs a human to review and act,
+    not to be silently assumed a glitch.
+
+    previous_count is nullable: the empty-feed branch of the guard (current
+    count is 0) trips even when there's no prior observation to compare
+    against at all (e.g. a company's very first fetch came back empty) —
+    that's still worth recording, just without a baseline number.
+
+    Whether previous_count == current_count == 0 (a board that's always
+    been empty, steady state rather than an event) is worth recording at
+    all is decided by the caller (parse_run.process_row), not here — this
+    function just writes whatever it's given.
+
+    ON CONFLICT DO NOTHING targets feed_anomalies_source_company_date_idx:
+    one row per (source, company, calendar day). ingest.py running twice in
+    a day must not write two rows for the same trip — the first write that
+    day wins, later ones in the same day are silent no-ops. Returns the new
+    row's id, or None if a row for this (source, company, today) already
+    existed.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO feed_anomalies (source, company, previous_count, current_count)
+            VALUES (%s, %s, %s, %s)
+            ON CONFLICT (source, company, ((detected_at AT TIME ZONE 'UTC')::date)) DO NOTHING
+            RETURNING id
+            """,
+            (source, company, previous_count, current_count),
+        )
+        row = cur.fetchone()
+    if commit:
+        conn.commit()
     return row[0] if row else None
 
 

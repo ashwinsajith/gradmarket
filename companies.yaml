@@ -183,12 +183,7 @@ workable:
   - wagestream
   - yoti
 
-workday:
-  - company: iberdrola
-    tenant: iberdrola
-    dc: wd3
-    site: Iberdrola
-    
+workday:    
   - company: lloydsbanking
     tenant: lbg
     dc: wd3
@@ -223,23 +218,6 @@ workday:
     site: Early_Careers
     detail_filter: false
 
-  - company: nvidia
-    tenant: nvidia
-    dc: wd5
-    site: NVIDIAExternalCareerSite
-    facets:
-      workerSubType:
-        - 0c40f6bd1d8f10adf6dae42e46d44a17
-        - ab40a98049581037a3ada55b087049b7
-
-  - company: morganstanley
-    tenant: ms
-    dc: wd5
-    site: External
-    facets:
-      workerSubType:
-        - 5a72a211d621102a11412ae10c95037b
-
   - company: cisco
     tenant: cisco
     dc: wd5
@@ -247,30 +225,6 @@ workday:
     facets:
       workerSubType:
         - a5e1942e7b2c01c6907030106001b700
-
-  - company: salesforce
-    tenant: salesforce
-    dc: wd12
-    site: External_Career_Site
-    facets:
-      workerSubType:
-        - 3a910852b2c31010f48d2cefdccd0000
-        - 3a910852b2c31010f48d29ef5db50000
-
-  - company: santander
-    tenant: santander
-    dc: wd3
-    site: SantanderCareers
-    facets:
-      workerSubType:
-        - c26ab0efcb8401233f6601097836b01a
-        - c26ab0efcb84015d14d602097836b71a
-
-  - company: mastercard
-    tenant: mastercard
-    dc: wd1
-    site: Campus
-    detail_filter: false
 
   - company: visa
     tenant: visa
@@ -294,3 +248,63 @@ workday:
       workerSubType:
         - cd3fc549fd3f1059499fa58cc52b1339
         - cd3fc549fd3f1059499fa6ea62ff133a
+  
+  - company: sky
+    tenant: sky
+    dc: wd3
+    site: sky_careers
+    facets:
+      workerSubType: [d7285e52d9d40122c7f49508742d0003]
+
+  - company: gsk
+    tenant: gsk
+    dc: wd5
+    site: GSKCareers
+    facets:
+      workerSubType: [8e8967868c201068ec2923fce22c89b2, e2abf442e93a101605cab1439a9fca52]
+
+  - company: astrazeneca
+    tenant: astrazeneca
+    dc: wd3
+    site: Careers
+    facets:
+      workerSubType: [b914f96b1779102cb8f0f533bb7c0908, b914f96b1779102cb8f0f340cc730907, b914f96b1779102cb8f0f92bd813090a]
+
+  - company: jll
+    tenant: jll
+    dc: wd1
+    site: jllcareers
+    facets:
+      workerSubType: [83c7fa911b4101a0f63c22b2db507809, e8739dcf8925011db680c08cbf67cf25]
+
+  - company: leonardo
+    tenant: leonardocompany
+    dc: wd3
+    site: LeonardoCareerSite
+    facets:
+      workerSubType: [4ab6efb7f1211000a6332e30fddf0000, 3db5aba692300100ffd3f7009d1d0001, 5e613bb82ef20100fffb42faf84b0001]
+
+  - company: centrica
+    tenant: centrica
+    dc: wd3
+    site: Centrica
+
+  - company: johnlewis
+    tenant: jlp
+    dc: wd3
+    site: JLPjobs_careers
+
+  - company: hiscox
+    tenant: hiscox
+    dc: wd3
+    site: Hiscox_External_Site
+
+  - company: aviva
+    tenant: aviva
+    dc: wd1
+    site: External
+
+  - company: diageo
+    tenant: diageo
+    dc: wd3
+    site: Diageo_Careers

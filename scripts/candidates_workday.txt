@@ -30,6 +30,18 @@ workday,workday,wd5,Workday
 expedia,expedia,wd108,search
 maersk,maersk,wd3,Maersk_Careers
 hyperion,hyperiongrp,wd3,Hyperion_External
+aviva,aviva,wd1,External
+hiscox,hiscox,wd3,Hiscox_External_Site
+jll,jll,wd1,jllcareers
+leonardo,leonardocompany,wd3,LeonardoCareerSite
+sli,slihrms,wd3,careers
+centrica,centrica,wd3,Centrica
+johnlewis,jlp,wd3,JLPjobs_careers
+diageo,diageo,wd3,Diageo_Careers
+gsk,gsk,wd5,GSKCareers
+astrazeneca,astrazeneca,wd3,Careers
+hpe,hpe,wd5,ACJobSite
+sky,sky,wd3,sky_careers
 
 
 
