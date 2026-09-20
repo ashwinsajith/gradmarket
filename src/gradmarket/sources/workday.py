@@ -107,10 +107,20 @@ class WorkdayToken:
 
     `detail_filter` is a per-board toggle read by detail_run.py, not by
     fetch() here — it decides whether a posting's title has to look
-    early-careers before its detail gets fetched. Defaults on; a
-    graduate-only board (e.g. Lloyds) sets it off in companies.yaml since
-    every posting there is already relevant — see CLAUDE.md and
-    detail_run.is_early_careers_title.
+    early-careers before its detail gets fetched. Its default depends on
+    `facets` (resolved in __post_init__, see below): off for a
+    facet-filtered board, since the server has already applied the
+    employer's own early-careers classification there and an English-only
+    title heuristic can only subtract postings from that — exactly what
+    went wrong for Leonardo's Italian/Portuguese board ("Stage", "Tesi",
+    "Estágio", "Jovem aprendiz"), where the title filter matched nothing
+    and 0 of 25 postings got details fetched. On otherwise — a
+    graduate-only board with no facets (e.g. Lloyds) still sets it off
+    explicitly in companies.yaml, since every posting there is already
+    relevant regardless of title. See CLAUDE.md and
+    detail_run.is_early_careers_title. An explicit `detail_filter: true` or
+    `false` in companies.yaml always overrides the computed default, either
+    direction.
 
     `facets` is sent as-is as the request body's appliedFacets — a mapping
     of facet parameter (workerSubType, occasionally jobFamilyGroup or
@@ -127,8 +137,23 @@ class WorkdayToken:
     tenant: str
     dc: str
     site: str
-    detail_filter: bool = True
+    # None means "not set explicitly in companies.yaml" — __post_init__
+    # resolves it based on facets. Always a real bool once construction
+    # completes; never read as None after that point. A dataclass field
+    # can't have its default computed from a sibling field directly (the
+    # default expression only sees `= True`, statically, not `self.facets`
+    # at the time), and WorkdayToken is frozen (no normal attribute
+    # assignment outside __init__) — this sentinel-plus-__post_init__
+    # combination is the standard way around both constraints. A property
+    # instead would mean detail_filter is no longer a real constructor
+    # parameter, breaking config.py's generic WorkdayToken(**entry) — the
+    # companies.yaml key has to keep mapping straight onto a real field.
+    detail_filter: bool | None = None
     facets: dict[str, list[str]] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if self.detail_filter is None:
+            object.__setattr__(self, "detail_filter", not self.facets)
 
     def __str__(self) -> str:
         """The identity slug, same role a bare string token plays for every

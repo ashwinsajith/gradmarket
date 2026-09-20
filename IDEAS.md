@@ -9,6 +9,7 @@ Parking lot for things deliberately deferred. Capturing, not committing.
 - Persistently-empty boards (optiver, marshallwace, mistral, labelbox, bumble, snyk, vercel) trip the feed guard every run — warnings become noise. Need to distinguish "always been empty" from "just collapsed"; only the latter is interesting.
 - Token health: a scheduled check that existing tokens still resolve, flagging new 404s — catches ATS migrations. Separate from discovery, which stays manual.
 - Dropping a company from config orphans its postings; now handled by reconciliation.
+- detail_run holds one Postgres connection across long HTTP fetch loops; the connection has dropped twice during long runs. Consider reconnecting per batch, or opening the connection only when writing.
 
 ## Coverage
 - Insurance and consultancies are thin. Most UK-native fintech (Starling, Wise, Revolut, Thought Machine) is on Workday or bespoke ATSes — unreachable via Greenhouse/Lever/Ashby. State as a sampling limitation in the write-up rather than solving.

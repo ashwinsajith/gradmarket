@@ -163,6 +163,50 @@ def test_workday_token_facets_defaults_to_empty_dict():
     assert token.facets == {}
 
 
+# --- detail_filter default depends on facets (see CLAUDE.md and __post_init__) ---
+
+
+def test_detail_filter_defaults_true_when_no_facets():
+    token = workday.WorkdayToken(company="lloydsbanking", tenant="lbg", dc="wd3", site="Graduate_careers")
+
+    assert token.detail_filter is True
+
+
+def test_detail_filter_defaults_false_when_facets_present():
+    # The Leonardo/Sky bug: a facet-filtered feed has already been scoped
+    # to early-careers roles server-side, using the employer's own
+    # classification. An English-only title heuristic on top can only
+    # subtract from that — Leonardo's board is Italian/Portuguese
+    # ("Stage", "Tesi", "Estágio", "Jovem aprendiz"), so it matched nothing
+    # and 0 of 25 postings got details fetched.
+    token = workday.WorkdayToken(
+        company="sky", tenant="sky", dc="wd3", site="External", facets={"workerSubType": ["id-1"]}
+    )
+
+    assert token.detail_filter is False
+
+
+def test_explicit_detail_filter_true_overrides_facets_default():
+    token = workday.WorkdayToken(
+        company="sky",
+        tenant="sky",
+        dc="wd3",
+        site="External",
+        facets={"workerSubType": ["id-1"]},
+        detail_filter=True,
+    )
+
+    assert token.detail_filter is True
+
+
+def test_explicit_detail_filter_false_overrides_no_facets_default():
+    token = workday.WorkdayToken(
+        company="lloydsbanking", tenant="lbg", dc="wd3", site="Graduate_careers", detail_filter=False
+    )
+
+    assert token.detail_filter is False
+
+
 def test_fetch_paginates_until_total_collected(monkeypatch):
     no_sleep(monkeypatch)
     full_page = {

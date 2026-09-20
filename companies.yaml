@@ -277,13 +277,6 @@ workday:
     facets:
       workerSubType: [83c7fa911b4101a0f63c22b2db507809, e8739dcf8925011db680c08cbf67cf25]
 
-  - company: leonardo
-    tenant: leonardocompany
-    dc: wd3
-    site: LeonardoCareerSite
-    facets:
-      workerSubType: [4ab6efb7f1211000a6332e30fddf0000, 3db5aba692300100ffd3f7009d1d0001, 5e613bb82ef20100fffb42faf84b0001]
-
   - company: centrica
     tenant: centrica
     dc: wd3

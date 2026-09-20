@@ -142,22 +142,40 @@ Postings are observed over time, not stored once:
   early-careers (`is_early_careers_title` — graduate, intern, internship,
   junior, campus, placement, trainee, apprentice, new grad, summer analyst,
   early career, entry level, scheme, programme/program, or a bare `20XX`
-  year), gated per board by `WorkdayToken.detail_filter` in companies.yaml
-  (default on). This exists because a general board (e.g. Barclays, ~971
-  postings) is mostly not early-careers, unlike a graduate-only board (e.g.
-  Lloyds, 36 postings, all relevant, `detail_filter: false`) — fetching
-  every posting's detail on a general board wastes most of a run's request
-  budget on postings that end up classified "experienced" anyway. The
-  pattern is deliberately over-inclusive on purpose, not just in the code
-  comment: a false positive costs one `fetch_detail()` request, a false
-  negative means a graduate role never gets a description and defaults to
-  "experienced" forever. **Tradeoff to know about:** a filtered board can
-  still miss a genuine early-careers posting whose title doesn't signal
-  it at all (an unusually-named graduate scheme, a role titled just
+  year), gated per board by `WorkdayToken.detail_filter`. This exists
+  because a general board (e.g. Barclays, ~971 postings before its facet
+  filter — see below) is mostly not early-careers, unlike a graduate-only
+  board (e.g. Lloyds, 36 postings, all relevant, `detail_filter: false`) —
+  fetching every posting's detail on a general board wastes most of a run's
+  request budget on postings that end up classified "experienced" anyway.
+  The pattern is deliberately over-inclusive on purpose, not just in the
+  code comment: a false positive costs one `fetch_detail()` request, a
+  false negative means a graduate role never gets a description and
+  defaults to "experienced" forever. **Tradeoff to know about:** a filtered
+  board can still miss a genuine early-careers posting whose title doesn't
+  signal it at all (an unusually-named graduate scheme, a role titled just
   "Analyst" with no other qualifier) — the filter only ever reduces false
   negatives to "titles the pattern doesn't recognise", it doesn't eliminate
   them. `detail_filter: false` is the escape hatch for a board where this
   matters enough to just fetch everything.
+  **`detail_filter`'s default depends on `facets` (see below), it isn't a
+  flat "on" anymore:** off when `facets` is non-empty, on otherwise —
+  `WorkdayToken.__post_init__` resolves this (a dataclass field's default
+  can't reference a sibling field directly, and the class is frozen, so a
+  `None`-sentinel-plus-`__post_init__` is what makes this work; a
+  `detail_filter: true`/`false` explicitly set in companies.yaml always
+  overrides the computed default either way). The rule: when a board is
+  already facet-filtered, the server has applied the employer's own
+  early-careers classification to the whole feed, so the English-only
+  title heuristic is redundant *and actively wrong* for a non-English
+  board — it can only ever subtract postings from a classification that's
+  already correct. This broke Leonardo's board outright: its postings are
+  Italian ("Stage", "Tesi") and Portuguese ("Estágio", "Jovem aprendiz"),
+  so the title pattern matched nothing and 0 of 25 facet-filtered postings
+  got details fetched (Sky, also facet-filtered, fared little better: 2 of
+  25). Leonardo was removed from companies.yaml entirely once its postings
+  turned out to be Italian/Brazilian internships, not UK roles — not
+  something this default-flip alone would have fixed.
 - Separately, a Workday board itself can be filtered *server-side*, at the
   list-fetch level, via `WorkdayToken.facets` — a mapping of facet
   parameter (`workerSubType`, occasionally `jobFamilyGroup` or
