@@ -47,6 +47,7 @@ def test_all_stages_succeed_pings_success_url(monkeypatch, capsys):
     assert "ingest ok" in out
     assert "parse ok" in out
     assert "detail fetch ok" in out
+    assert "reparse ok" in out
     assert "classify ok" in out
 
 
@@ -93,12 +94,13 @@ def test_ingest_zero_succeeded_pings_fail_but_still_runs_parse(monkeypatch, caps
 
     pipeline.main()
 
-    assert parse_calls == [1]  # parse is still attempted — old raw_fetches may still need parsing
+    assert parse_calls == [1, 1]  # parse runs twice (first pass + reparse after detail_run)
     assert calls == [("https://hc.example/ping/abc/fail", {"timeout": 10})]
     out = capsys.readouterr().out
     assert "collection gap" in out
     assert "parse ok" in out
     assert "detail fetch ok" in out
+    assert "reparse ok" in out
     assert "classify ok" in out
 
 
@@ -169,7 +171,12 @@ def test_detail_run_raises_after_successful_ingest_and_parse_pings_fail_and_skip
     _set_healthcheck_url(monkeypatch)
     calls = _capture_pings(monkeypatch)
     monkeypatch.setattr(ingest, "run", lambda: (5, 5))
-    monkeypatch.setattr(parse_run, "run", lambda: {"processed": 3, "skipped_failures": 0, "total_rows": 3})
+    parse_calls = []
+    monkeypatch.setattr(
+        parse_run,
+        "run",
+        lambda: parse_calls.append(1) or {"processed": 3, "skipped_failures": 0, "total_rows": 3},
+    )
     monkeypatch.setattr(detail_run, "run", lambda **kw: (_ for _ in ()).throw(RuntimeError("workday 500")))
     classify_calls = []
     monkeypatch.setattr(classify_run, "run", lambda: classify_calls.append(1))
@@ -177,6 +184,7 @@ def test_detail_run_raises_after_successful_ingest_and_parse_pings_fail_and_skip
     with pytest.raises(RuntimeError, match="workday 500"):
         pipeline.main()
 
+    assert parse_calls == [1]  # only the first pass — the reparse never happens
     assert classify_calls == []  # never attempted
     assert calls == [("https://hc.example/ping/abc/fail", {"timeout": 10})]
     out = capsys.readouterr().out
@@ -184,6 +192,39 @@ def test_detail_run_raises_after_successful_ingest_and_parse_pings_fail_and_skip
     assert "parse ok" in out
     assert "no posting or raw data is at risk" in out
     assert "collection gap" not in out
+    assert "reparse ok" not in out
+
+
+def test_reparse_raises_after_successful_first_parse_and_detail_pings_fail_and_skips_classify(monkeypatch, capsys):
+    _set_healthcheck_url(monkeypatch)
+    calls = _capture_pings(monkeypatch)
+    monkeypatch.setattr(ingest, "run", lambda: (5, 5))
+    parse_calls = []
+
+    def fake_parse_run():
+        parse_calls.append(1)
+        if len(parse_calls) == 2:
+            raise RuntimeError("bad hash on reparse")
+        return {"processed": 3, "skipped_failures": 0, "total_rows": 3}
+
+    monkeypatch.setattr(parse_run, "run", fake_parse_run)
+    _stub_detail_run(monkeypatch)
+    classify_calls = []
+    monkeypatch.setattr(classify_run, "run", lambda: classify_calls.append(1))
+
+    with pytest.raises(RuntimeError, match="bad hash on reparse"):
+        pipeline.main()
+
+    assert parse_calls == [1, 1]  # both the first pass and the reparse were attempted
+    assert classify_calls == []  # never attempted
+    assert calls == [("https://hc.example/ping/abc/fail", {"timeout": 10})]
+    out = capsys.readouterr().out
+    assert "ingest ok" in out
+    assert "parse ok" in out
+    assert "detail fetch ok" in out
+    assert "this second pass only joins fetched details in" in out
+    assert "collection gap" not in out
+    assert "reparse ok" not in out
 
 
 def test_classify_raises_after_successful_ingest_parse_and_detail_pings_fail(monkeypatch, capsys):
@@ -202,5 +243,6 @@ def test_classify_raises_after_successful_ingest_parse_and_detail_pings_fail(mon
     assert "ingest ok" in out
     assert "parse ok" in out
     assert "detail fetch ok" in out
+    assert "reparse ok" in out
     assert "least urgent" in out
     assert "collection gap" not in out

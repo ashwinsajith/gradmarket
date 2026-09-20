@@ -248,21 +248,34 @@ Postings are observed over time, not stored once:
 - A 200 response with an empty jobs array does NOT mean all jobs closed. It usually means the company switched ATS provider. Treating it as closure corrupts history for every posting they had. Handle empty-but-200 distinctly.
 - Greenhouse returns descriptions as HTML. Strip before embedding.
 - A company migrating between ATS providers appears as two identities, since identity includes `source`. The same job will look closed on the old board and newly-posted on the new one, producing a false close and a false first_seen_at. Not handled yet — needs a merge rule once we have a second source.
-- `pipeline.py` runs `detail_run` between `parse_run` and `classify_run` so a
-  brand-new Workday posting gets a chance at its description before
-  classification sees it — but within a single cycle, `parse_run` has
-  already run by the time `detail_run` fetches that new posting's detail,
-  so the freshly-fetched text doesn't reach `posting_versions` until a
-  *later* day's parse pass re-reads a fresh raw_fetches row for it. A new
-  Workday posting's very first classification can therefore happen with
-  `description_raw = None`. This used to mean it stayed misclassified
-  forever, since classification only ran once (`classified_at IS NULL`) —
-  fixed by `get_postings_to_classify` also picking up any posting whose
+- `pipeline.py` runs `parse_run` TWICE — once before `detail_run`, once
+  right after it, before `classify_run`. The first pass creates a two-stage
+  source's postings (currently just Workday) with location/description
+  still missing, since detail hasn't been fetched yet at that point.
+  `detail_run.run()` then fetches what's missing and, for every company it
+  stored at least one new detail for, flags that company's most recent
+  `raw_fetches` row unparsed again (`db.mark_latest_raw_fetch_unparsed`,
+  once per company per run, only touching an already-parsed row). The
+  second `parse_run` pass reparses exactly those flagged rows, joining the
+  new details into `postings`/`posting_versions` — and since this all
+  happens before `classify_run` runs, a brand-new Workday posting's very
+  first classification now sees its real content in the *same* cycle,
+  not a day or more later. This closes what used to be a real gap: a new
+  posting's first-ever classification happening with `description_raw =
+  None`, permanently, since classification only ran once
+  (`classified_at IS NULL`).
+  `get_postings_to_classify` also picking up any posting whose
   `postings.updated_at` is newer than its `classified_at` (a stale
-  classification, not just a missing one). Not Workday-specific: the same
-  gap applies to any source where a company edits a posting's title or
+  classification, not just a missing one) is what makes even a *later*
+  cycle's join-in still trigger reclassification reliably — this second
+  parse pass is what makes that usually not even necessary. Not
+  Workday-specific: the same content-changed-after-classification gap
+  applies to any source where a company edits a posting's title or
   location after it was first seen. `--full` still reclassifies everything
-  unconditionally, `updated_at` freshness included.
+  unconditionally, `updated_at` freshness included. When `detail_run`
+  stores nothing new, no company gets flagged, so the second parse pass is
+  a no-op — parse_run's own idempotency (`get_unparsed_raw_fetches`, gated
+  on `parsed_at`) handles that without any special-casing.
 - `postings.updated_at` is set to `now()` by `bulk_upsert_postings`, but
   ONLY when this posting's content actually changed (an insert, or an
   update whose incoming content_hash differs from what's stored) — real

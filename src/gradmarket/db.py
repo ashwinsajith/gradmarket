@@ -321,6 +321,50 @@ def mark_raw_fetch_parsed(conn: psycopg.Connection, raw_fetch_id: int, *, commit
         conn.commit()
 
 
+def mark_latest_raw_fetch_unparsed(conn: psycopg.Connection, *, source: str, company: str, commit: bool = True) -> bool:
+    """Flag this company's single most recent raw_fetches row (by
+    fetched_at) as unparsed again, if it's currently parsed — a no-op if
+    it's already unparsed, or if there's no raw_fetches row for this
+    company at all.
+
+    Used by detail_run.py right after it stores new detail data for a
+    company: that company's postings were already created by an earlier
+    parse pass with location/description missing (see parse/workday.py's
+    two-stage extractor), so re-parsing its most recent row is what
+    actually joins the newly-fetched details into postings/
+    posting_versions — see pipeline.py's second parse_run pass, right
+    after detail_run, for the other half of this.
+
+    Deliberately only the single most recent row, not every parsed row for
+    this company: it's the one raw_fetches row db.get_postings_missing_detail
+    itself reads list identities from, so it's the only one whose reparse
+    could possibly pick up newly-stored raw_details rows.
+
+    Returns True if a row was actually flagged, False if there was nothing
+    to do.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE raw_fetches
+            SET parsed_at = NULL
+            WHERE id = (
+                SELECT id FROM raw_fetches
+                WHERE source = %s AND company = %s
+                ORDER BY fetched_at DESC
+                LIMIT 1
+            )
+            AND parsed_at IS NOT NULL
+            RETURNING id
+            """,
+            (source, company),
+        )
+        row = cur.fetchone()
+    if commit:
+        conn.commit()
+    return row is not None
+
+
 def update_raw_fetch_payload(conn: psycopg.Connection, raw_fetch_id: int, payload: Any, *, commit: bool = True) -> None:
     """Overwrite one raw_fetches row's payload in place. Used by
     parse_run.process_row to strip description text immediately after that

@@ -19,6 +19,12 @@ class FakeDB:
     def __init__(self, candidates):
         self.candidates = candidates
         self.inserted: list[dict] = []
+        # company -> is that company's latest raw_fetches row currently
+        # parsed. Defaults to True (the common case: an earlier parse pass
+        # already created postings from it) unless a test overrides it —
+        # e.g. to simulate "already flagged unparsed", set False.
+        self.latest_row_parsed: dict[str, bool] = {}
+        self.flagged_for_reparse: list[tuple[str, str]] = []
 
     def get_connection(self):
         return self
@@ -43,6 +49,14 @@ class FakeDB:
             }
         )
         return len(self.inserted)
+
+    def mark_latest_raw_fetch_unparsed(self, conn, *, source, company):
+        was_parsed = self.latest_row_parsed.get(company, True)
+        if not was_parsed:
+            return False
+        self.latest_row_parsed[company] = False
+        self.flagged_for_reparse.append((source, company))
+        return True
 
 
 def setup(monkeypatch, candidates, fetch_detail_fn):
@@ -73,6 +87,7 @@ def test_run_fetches_each_candidate_and_records_detail(monkeypatch):
         "failed": 0,
         "skipped_unconfigured": 0,
         "skipped_filtered": 0,
+        "flagged_for_reparse": 1,  # one company, "example", got new details this run
     }
     assert len(fake.inserted) == 2
     assert fake.inserted[0]["http_status"] == 200
@@ -153,6 +168,7 @@ def test_run_skips_company_with_no_companies_yaml_entry(monkeypatch):
         "failed": 0,
         "skipped_unconfigured": 1,
         "skipped_filtered": 0,
+        "flagged_for_reparse": 0,
     }
     assert calls == []
     assert fake.inserted == []
@@ -242,6 +258,7 @@ def test_non_matching_title_is_filtered_out_without_fetching(monkeypatch):
         "failed": 0,
         "skipped_unconfigured": 0,
         "skipped_filtered": 1,
+        "flagged_for_reparse": 0,
     }
     assert calls == []
     assert fake.inserted == []
@@ -316,3 +333,77 @@ def test_detail_filter_false_fetches_regardless_of_title(monkeypatch):
     assert summary["attempted"] == 1
     assert summary["skipped_filtered"] == 0
     assert calls == [1]
+
+
+# --- flagging a company's most recent row unparsed after new details ---
+
+
+def test_no_companies_flagged_for_reparse_when_nothing_fetched(monkeypatch):
+    # No candidates at all — the common case for most runs (no new Workday
+    # postings needing details). Nothing fetched, nothing to join in, so
+    # nothing should be flagged.
+    fake, _sleeps = setup(
+        monkeypatch, [], lambda tenant, dc, site, external_path: DetailResult(status_code=200, payload={})
+    )
+
+    summary = detail_run.run()
+
+    assert summary["flagged_for_reparse"] == 0
+    assert fake.flagged_for_reparse == []
+
+
+def test_failed_fetch_does_not_flag_company_for_reparse(monkeypatch):
+    # A 404/error result stores a raw_details row with payload=None, which
+    # the extractor treats the same as "no detail yet" — nothing new for a
+    # reparse to actually join in, so a failure alone must not flag it.
+    fake, _sleeps = setup(
+        monkeypatch,
+        [candidate()],
+        lambda tenant, dc, site, external_path: DetailResult(status_code=404, payload=None, error="not found"),
+    )
+
+    summary = detail_run.run()
+
+    assert summary["flagged_for_reparse"] == 0
+    assert fake.flagged_for_reparse == []
+
+
+def test_successful_fetch_flags_company_once_even_with_multiple_postings(monkeypatch):
+    candidates = [candidate(external_id="JR0001"), candidate(external_id="JR0002")]
+    fake, _sleeps = setup(
+        monkeypatch, candidates, lambda tenant, dc, site, external_path: DetailResult(status_code=200, payload={})
+    )
+
+    summary = detail_run.run()
+
+    assert summary["flagged_for_reparse"] == 1
+    assert fake.flagged_for_reparse == [("workday", "example")]  # once, not once per posting
+
+
+def test_flagging_is_a_noop_when_row_already_unparsed(monkeypatch):
+    fake, _sleeps = setup(
+        monkeypatch, [candidate()], lambda tenant, dc, site, external_path: DetailResult(status_code=200, payload={})
+    )
+    fake.latest_row_parsed["example"] = False  # simulates already flagged (e.g. by an earlier step)
+
+    summary = detail_run.run()
+
+    assert summary["flagged_for_reparse"] == 0  # nothing NEW to flag
+    assert fake.flagged_for_reparse == []
+
+
+def test_dry_run_skips_flagging_but_still_fetches_and_stores(monkeypatch):
+    calls = []
+
+    def fake_fetch_detail(tenant, dc, site, external_path):
+        calls.append(1)
+        return DetailResult(status_code=200, payload={})
+
+    fake, _sleeps = setup(monkeypatch, [candidate()], fake_fetch_detail)
+
+    summary = detail_run.run(dry_run=True)
+
+    assert calls == [1]  # the fetch itself still happens
+    assert len(fake.inserted) == 1  # and is still stored
+    assert summary["flagged_for_reparse"] == 0
+    assert fake.flagged_for_reparse == []  # only the reparse flag is skipped

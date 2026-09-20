@@ -814,6 +814,21 @@ def test_run_is_idempotent_across_invocations(fake_db):
     assert len(fake_db.postings) == 1
 
 
+def test_second_pipeline_parse_pass_is_a_no_op_when_nothing_flagged_for_reparse(fake_db):
+    # pipeline.py runs parse_run.run() twice: once before detail_run, once
+    # right after it. When detail_run finds nothing to fetch — the common
+    # case, since most runs have no new Workday postings needing details —
+    # it flags no company's row unparsed (see detail_run.run()), so this
+    # second pass has nothing to do. No special-casing needed for this:
+    # parse_run's own idempotency (get_unparsed_raw_fetches, gated on
+    # parsed_at) already guarantees it.
+    process(fake_db, make_row(1, gh_payload([gh_job(1, "A")]), T0))
+
+    summary = parse_run.run()  # stands in for the pipeline's second, post-detail_run call
+
+    assert summary["processed"] == 0
+
+
 def test_run_full_wipes_and_reprocesses_everything(fake_db):
     fake_db.raw_fetches_history.append(make_row(1, gh_payload([gh_job(1, "A")]), T0))
 

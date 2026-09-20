@@ -27,6 +27,28 @@ backfill is its entire board, and fetching a several-thousand-posting board's
 worth of details at 1/sec in one run would blow well past a daily cron
 slot's budget.
 
+After a company's details are stored, its most recent raw_fetches row is
+flagged unparsed again (db.mark_latest_raw_fetch_unparsed) — postings for
+that row were already created by an earlier parse pass with location/
+description missing (parse/workday.py's two-stage extractor), so this is
+what makes a follow-up parse_run pass actually join the newly-fetched
+details in, rather than them sitting in raw_details unused until some
+unrelated future row happens to get reparsed. See pipeline.py's second
+parse_run call, right after this pass, for the other half. Once per company
+per run (not per posting), and only for a company that actually got at
+least one new detail stored this run — nothing to join in otherwise, so
+nothing to flag.
+
+dry_run here is scoped narrowly to this one step, not a full simulation of
+the pass: fetch_detail() still makes real requests and insert_raw_detail()
+still writes real raw_details rows either way (see CLAUDE.md on why a
+detail-fetch's own retries/backoff are unconditional), since neither costs
+anything to redo and a real preview of "what would be fetched" would need
+to fetch to know. What dry_run skips is only the reparse flag itself —
+a real side effect on raw_fetches.parsed_at with a real, visible
+consequence (a bigger parse_run queue next time), worth being able to
+preview without actually perturbing it.
+
 Title pre-filter: a general board (e.g. Barclays, ~971 postings) is mostly
 not early-careers, unlike a graduate-only board (e.g. Lloyds, 36 postings,
 all relevant). Fetching every posting's detail on a general board wastes
@@ -90,7 +112,7 @@ def _load_workday_tokens() -> dict[str, workday.WorkdayToken]:
     return {token.company: token for token in tokens}
 
 
-def run(*, limit: int | None = None) -> dict:
+def run(*, limit: int | None = None, dry_run: bool = False) -> dict:
     conn = db.get_connection()
     db.init_schema(conn)
 
@@ -102,6 +124,7 @@ def run(*, limit: int | None = None) -> dict:
     failed = 0
     skipped_unconfigured = 0
     skipped_filtered = 0
+    companies_with_new_details: set[str] = set()
 
     for candidate in candidates:
         if limit is not None and attempted >= limit:
@@ -137,11 +160,18 @@ def run(*, limit: int | None = None) -> dict:
 
         if result.payload is not None:
             succeeded += 1
+            companies_with_new_details.add(company)
             print(f"{SOURCE}/{company}/{candidate['external_id']}: {result.status_code}")
         else:
             failed += 1
             detail = result.error or str(result.status_code)
             print(f"{SOURCE}/{company}/{candidate['external_id']}: FAILED ({detail})")
+
+    flagged_for_reparse = 0
+    if not dry_run:
+        for company in sorted(companies_with_new_details):
+            if db.mark_latest_raw_fetch_unparsed(conn, source=SOURCE, company=company):
+                flagged_for_reparse += 1
 
     conn.close()
 
@@ -154,6 +184,8 @@ def run(*, limit: int | None = None) -> dict:
         print(f"  skipped (no companies.yaml entry): {skipped_unconfigured}")
     if skipped_filtered:
         print(f"  skipped (title filter): {skipped_filtered}")
+    if flagged_for_reparse:
+        print(f"  flagged for reparse: {flagged_for_reparse}")
 
     return {
         "attempted": attempted,
@@ -161,6 +193,7 @@ def run(*, limit: int | None = None) -> dict:
         "failed": failed,
         "skipped_unconfigured": skipped_unconfigured,
         "skipped_filtered": skipped_filtered,
+        "flagged_for_reparse": flagged_for_reparse,
     }
 
 
@@ -172,12 +205,20 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Cap the number of detail fetches this run (a new tenant's backfill is its whole board)",
     )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help=(
+            "Fetch and store details as normal, but skip flagging companies' rows for reparse "
+            "(see run()'s docstring for why this dry-run is scoped to just that one step)"
+        ),
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    run(limit=args.limit)
+    run(limit=args.limit, dry_run=args.dry_run)
 
 
 if __name__ == "__main__":
