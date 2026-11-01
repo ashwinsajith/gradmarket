@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from collections.abc import Callable
 from datetime import date, timedelta
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -228,7 +229,7 @@ def _page(snapshot: Snapshot | None = None) -> str:
 
 
 def test_hero_leads_with_name_then_tagline_then_subhead_then_stats():
-    html = _page()
+    html = _page().split("<body", 1)[1]  # the meta description repeats the subhead's words
 
     order = [
         html.index(">GradMarket.</h1>"),
@@ -367,4 +368,87 @@ def test_city_filter_sits_with_company_and_source():
     html = _page()
 
     assert html.index('id="f-city"') < html.index('id="f-company"') < html.index('id="f-source"')
+
+
+# --- filter count vs chart (regression) ---
+
+
+def test_only_the_filter_bar_carries_data_count():
+    """Regression: chart bars carried data-count too, so site.js's lookup for
+    the filter count matched the first bar and wrote "257 roles" into the
+    chart. The count must be the only data-count, and inside the form."""
+    html = _page(_snapshot([_role("a", first_seen_at=NOW)], arrival_counts={date(2026, 9, 3): 4}))
+
+    assert html.count("data-count") == 1
+    form = html.split('data-filters>', 1)[1].split("</form>", 1)[0]
+    assert "data-count" in form
+
+
+def test_chart_markup_has_no_attribute_the_list_uses():
+    html = _page(_snapshot([], arrival_counts={date(2026, 9, 3): 4}))
+    chart = html.split('class="arrivals__bars"', 1)[1].split("</div>", 1)[0]
+
+    for attribute in ("data-count", "data-label", "data-group", "data-cities"):
+        assert attribute not in chart
+
+
+def test_days_with_arrivals_are_marked_for_a_minimum_height_and_empty_days_are_not():
+    html = _page(_snapshot([], arrival_counts={date(2026, 9, 3): 1}))
+    bars = re.findall(r'<span class="(bar[^"]*)"[^>]*data-day="([^"]*)"', html)
+
+    some = {day for classes, day in bars if "bar--some" in classes}
+    assert some == {"3 Sep 2026"}
+
+
+# --- icons and metadata ---
+
+
+ICONS = {"icon-16.png": 16, "icon-32.png": 32, "icon-180.png": 180, "icon-512.png": 512}
+# Which mark each size uses. Both tab sizes are solid — retina tabs request
+# the 32px icon for a 16px slot — and the dot-matrix mark starts at 180.
+SOLID_ICONS = {"icon-16.png", "icon-32.png"}
+DOT_MATRIX_ICONS = {"icon-180.png", "icon-512.png"}
+UNLIT_CELL = (0x2A, 0x2E, 0x34)  # only the dot-matrix mark has unlit cells
+
+
+def test_icon_links_and_metadata():
+    html = _page()
+
+    assert '<link rel="icon" type="image/png" sizes="16x16" href="/static/icon-16.png">' in html
+    assert '<link rel="icon" type="image/png" sizes="32x32" href="/static/icon-32.png">' in html
+    assert '<link rel="apple-touch-icon" href="/static/icon-180.png">' in html
+    assert '<meta name="theme-color" content="#0b0c0f">' in html
+    assert "<title>GradMarket — Open UK graduate roles</title>" in html
+    assert re.search(r'<meta name="description" content="[^"]*195 company job boards', html)
+    for prop in ("og:title", "og:description", "og:url", "og:type", "og:image"):
+        assert f'property="{prop}"' in html, prop
+    assert 'property="og:image" content="http://testserver/static/icon-512.png"' in html
+
+
+def test_icon_files_are_served_as_png_at_their_stated_size():
+    with _client(_fake_snapshot) as client:
+        for name, size in ICONS.items():
+            resp = client.get(f"/static/{name}")
+            assert resp.status_code == 200, name
+            assert resp.headers["content-type"] == "image/png"
+            # PNG IHDR: width and height are big-endian at bytes 16-24.
+            assert int.from_bytes(resp.content[16:20], "big") == size, name
+            assert int.from_bytes(resp.content[20:24], "big") == size, name
+
+
+def test_each_icon_size_uses_the_right_mark():
+    """Told apart by the dot-matrix mark's unlit-cell colour, which the solid
+    mark never contains."""
+    image = pytest.importorskip("PIL.Image")
+    static = Path(__file__).resolve().parents[2] / "src" / "gradmarket" / "web" / "static"
+    assert SOLID_ICONS | DOT_MATRIX_ICONS == set(ICONS)
+
+    def unlit_pixels(name: str) -> int:
+        colours = image.open(static / name).convert("RGB").getcolors(maxcolors=1 << 20)
+        return sum(n for n, rgb in colours if all(abs(a - b) <= 3 for a, b in zip(rgb, UNLIT_CELL)))
+
+    for name in SOLID_ICONS:
+        assert unlit_pixels(name) == 0, name
+    for name in DOT_MATRIX_ICONS:
+        assert unlit_pixels(name) > 0, name
 

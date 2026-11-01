@@ -127,6 +127,7 @@ def create_app(cache: SnapshotCache | None = None) -> FastAPI:
                 # pipeline last saw these boards, not when this page cached.
                 "last_checked": max((r.last_seen_at for r in roles), default=None),
                 "repo_url": REPO_URL,
+                "site_url": str(request.base_url).rstrip("/"),
             },
         )
 

@@ -45,8 +45,8 @@
     plot.addEventListener("pointerover", function (e) {
       var bar = e.target.closest(".bar");
       if (!bar) return;
-      var n = Number(bar.dataset.count);
-      tip.textContent = bar.dataset.label + " · " + n + (n === 1 ? " posting" : " postings");
+      var n = Number(bar.dataset.arrived);
+      tip.textContent = bar.dataset.day + " · " + n + (n === 1 ? " posting" : " postings");
       tip.hidden = false;
       var centre = bar.offsetLeft + bar.offsetWidth / 2;
       var half = tip.offsetWidth / 2;
@@ -67,13 +67,17 @@
     }).observe(form);
   }
 
-  var rows = Array.prototype.slice.call(document.querySelectorAll("tr.role"));
-  var groups = Array.prototype.slice.call(document.querySelectorAll("tbody.group"));
-  var flat = document.querySelector("[data-flat]");
-  var sortNote = document.querySelector("[data-sort-note]");
-  var count = document.querySelector("[data-count]");
-  var empty = document.querySelector("[data-empty]");
-  var headers = document.querySelectorAll("th [data-sort]");
+  var rows = Array.prototype.slice.call(document.querySelectorAll("#roles tr.role"));
+  var groups = Array.prototype.slice.call(document.querySelectorAll("#roles tbody.group"));
+  // Scoped to the list's own elements. A document-wide lookup once matched a
+  // chart bar instead of the count — the chart is never touched from here,
+  // and the filters never change it.
+  var list = document.getElementById("roles");
+  var flat = list.querySelector("[data-flat]");
+  var sortNote = list.querySelector("[data-sort-note]");
+  var count = form.querySelector("[data-count]");
+  var empty = list.querySelector("[data-empty]");
+  var headers = document.querySelectorAll("#roles th [data-sort]");
   var grouped = true;
   var current = null; // { key, descending } once a column is sorted
 
@@ -152,7 +156,7 @@
   });
 
   // ...and this puts them back, each row in its group in server order.
-  document.querySelector("[data-regroup]").addEventListener("click", function () {
+  list.querySelector("[data-regroup]").addEventListener("click", function () {
     groups.forEach(function (group) {
       rows
         .filter(function (row) { return row.dataset.group === group.dataset.group; })

@@ -15,7 +15,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "ruff>=0.6", "httpx>=0.27"]
+dev = ["pytest>=8.0", "ruff>=0.6", "httpx>=0.27", "pillow>=10"]
 
 [build-system]
 requires = ["setuptools>=68"]
@@ -27,7 +27,7 @@ where = ["src"]
 # The web service's template and static assets ship inside the package —
 # without this, `pip install .` (the Dockerfile) leaves them out.
 [tool.setuptools.package-data]
-"gradmarket.web" = ["templates/*.html", "static/*.css", "static/*.js"]
+"gradmarket.web" = ["templates/*.html", "static/*.css", "static/*.js", "static/*.png"]
 
 [project.scripts]
 gradmarket-ingest = "gradmarket.ingest:main"

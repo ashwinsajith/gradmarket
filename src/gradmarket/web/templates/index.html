@@ -3,9 +3,30 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>GradMarket — open UK graduate roles</title>
-  <meta name="description" content="Open UK graduate and internship roles from {{ boards_monitored }} company job boards, checked daily, with how long each has been open.">
+  <title>GradMarket — Open UK graduate roles</title>
+  {%- set description = "Open UK graduate and internship roles from " ~ "{:,}".format(boards_monitored) ~ " company job boards, checked every morning — with when each was first seen and how long it's been open." %}
+  <meta name="description" content="{{ description }}">
   <meta name="color-scheme" content="dark light">
+  <meta name="theme-color" content="#0b0c0f">
+  {#- PNG per size, not one SVG: the dot-matrix mark is unreadable below
+      ~24px, so both tab sizes (16, and 32 for retina tabs) get the solid
+      letterform; dot-matrix starts at 180. Root-relative, like every
+      asset (see below). #}
+  <link rel="icon" type="image/png" sizes="16x16" href="/static/icon-16.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="/static/icon-32.png">
+  <link rel="apple-touch-icon" href="/static/icon-180.png">
+  {#- Open Graph needs absolute URLs. site_url comes from the request, whose
+      scheme is right behind Railway's proxy because uvicorn trusts
+      X-Forwarded-Proto (gradmarket.web.__main__). These are metadata for
+      crawlers, never loaded by the page, so they can't cause mixed content. #}
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="GradMarket — Open UK graduate roles">
+  <meta property="og:description" content="{{ description }}">
+  <meta property="og:url" content="{{ site_url }}/">
+  <meta property="og:image" content="{{ site_url }}/static/icon-512.png">
+  <meta property="og:image:width" content="512">
+  <meta property="og:image:height" content="512">
+  <meta property="og:image:alt" content="GradMarket's mark: a dot-matrix capital G">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400..500&family=Inter+Tight:wght@500..600&display=swap">
@@ -76,9 +97,13 @@
           <div class="arrivals__plot" data-arrivals>
             <div class="arrivals__bars" aria-hidden="true">
               {%- for d in arrivals.days -%}
-              <span class="bar{% if d.is_recent %} bar--recent{% endif %}"
+              {#- data-day / data-arrived, never data-count / data-label: those
+                  names belong to the filter bar's count and the mobile row pills,
+                  and a bar sharing one hijacked document.querySelector() once —
+                  "257 roles" was written into the first bar. #}
+              <span class="bar{% if d.count %} bar--some{% endif %}{% if d.is_recent %} bar--recent{% endif %}"
                     style="--h: {{ '%.1f' | format(d.height_pct) }}%"
-                    data-label="{{ d.day | full_date }}" data-count="{{ d.count }}"></span>
+                    data-day="{{ d.day | full_date }}" data-arrived="{{ d.count }}"></span>
               {%- endfor -%}
             </div>
             <span class="arrivals__tip" data-arrivals-tip hidden></span>

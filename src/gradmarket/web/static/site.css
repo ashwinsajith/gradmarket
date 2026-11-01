@@ -280,20 +280,27 @@ a:hover {
   position: relative;
 }
 
+/* Exactly 80px of plot, sitting on a hairline baseline so a zero day reads
+ * as zero, not as missing data. Linear scale: the busiest day touches the
+ * top. */
 .arrivals__bars {
   display: flex;
-  align-items: stretch;
+  align-items: flex-end;
   gap: 1px;
-  height: 80px;
+  height: calc(80px + 1px); /* border-box: 80px of plot plus the baseline */
+  border-bottom: 1px solid var(--hairline);
 }
 
-/* Each bar is a full-height hover target; its ::after is the visible fill,
- * so a zero day can still be hovered. */
+/* Each bar is a full-height hover target (so a zero day can still be
+ * hovered); its ::after is the visible fill. height: 100% of a fixed-height
+ * parent, not flex stretch, so the fill's percentage height resolves in
+ * every engine. */
 .bar {
   display: flex;
   flex: 1 1 0;
   align-items: flex-end;
   min-width: 0;
+  height: 100%;
 }
 
 .bar::after {
@@ -302,6 +309,11 @@ a:hover {
   height: var(--h);
   background: var(--muted);
   opacity: 0.55;
+}
+
+/* A day with any arrival is never invisible: one role still draws 2px. */
+.bar--some::after {
+  min-height: 2px;
 }
 
 .bar--recent::after {
