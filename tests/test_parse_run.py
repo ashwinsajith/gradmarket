@@ -1007,7 +1007,7 @@ def test_reconciliation_leaves_configured_workday_company_untouched(fake_db, mon
     # the plain company string get_open_source_companies returns, or every
     # configured Workday company reads as orphaned and gets closed — this
     # happened in production (workday/iberdrola, 221 postings wrongly
-    # closed, see CLAUDE.md).
+    # closed, see docs/ARCHITECTURE.md).
     monkeypatch.setenv("COMPANIES_FILE", str(FIXTURES / "companies_workday_test.yaml"))
 
     row = make_row(1, [wd_item("JR0001", "Graduate Software Engineer")], T0, source="workday", company="example")

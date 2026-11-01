@@ -34,7 +34,7 @@ mapping of facet parameter to a list of ids, sent as the request body's
 appliedFacets; it defaults to {}, so a board with no facets configured
 behaves exactly as before this existed. Facet ids are opaque and
 tenant-specific — discovered per board with scripts/probe_facets.py, never
-inferred or guessed. See CLAUDE.md for the close-detection tradeoff a
+inferred or guessed. See docs/ARCHITECTURE.md for the close-detection tradeoff a
 facet-filtered board takes on (it's no longer a *complete* feed, so a
 posting reclassified out of the filtered subtype looks like a closure
 rather than what it actually is).
@@ -44,7 +44,7 @@ CXS base plus the posting's externalPath, returning the full detail JSON for
 one posting. Requires Accept: application/json explicitly — without it,
 Workday serves back an HTML shell instead of JSON.
 
-Deliberate exception to storing raw responses untouched (see CLAUDE.md's
+Deliberate exception to storing raw responses untouched (see docs/ARCHITECTURE.md's
 "raw first, parse later" rule): fetch_detail() strips any videoInfo block
 before returning. videoInfo carries CDN tokens with expiry timestamps that
 rotate on every single fetch, which would make the stored payload for an
@@ -117,7 +117,7 @@ class WorkdayToken:
     and 0 of 25 postings got details fetched. On otherwise — a
     graduate-only board with no facets (e.g. Lloyds) still sets it off
     explicitly in companies.yaml, since every posting there is already
-    relevant regardless of title. See CLAUDE.md and
+    relevant regardless of title. See docs/ARCHITECTURE.md and
     detail_run.is_early_careers_title. An explicit `detail_filter: true` or
     `false` in companies.yaml always overrides the computed default, either
     direction.
@@ -129,7 +129,7 @@ class WorkdayToken:
     before this field existed. These ids can only come from companies.yaml
     — never inferred or guessed, since they're meaningless outside the
     tenant that issued them. See scripts/probe_facets.py for how to find
-    them, and CLAUDE.md for the close-detection tradeoff a filtered board
+    them, and docs/ARCHITECTURE.md for the close-detection tradeoff a filtered board
     takes on.
     """
 

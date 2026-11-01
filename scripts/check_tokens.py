@@ -24,15 +24,15 @@ For --source workable specifically: a nonsense token 404s, so a 200 response
 three sources. Within the empty section, a zero-job account is additionally
 flagged as a "likely shell" when BOTH its name is token-identical
 (case-insensitive) AND its description is empty — see
-workable_likely_shell() and CLAUDE.md's data model section. Workable account
+workable_likely_shell() and docs/ARCHITECTURE.md's data model section. Workable account
 slugs still aren't namespaced to real company identity (the slug-collision
 finding, e.g. "notion" resolving to an unrelated agency, is unrelated to and
-unaffected by the job-count question) — see CLAUDE.md.
+unaffected by the job-count question) — see docs/ARCHITECTURE.md.
 
 For --source workday specifically: a candidate isn't a bare token, it's four
 comma-separated values per line — company,tenant,dc,site (see
 DEFAULT_WORKDAY_CANDIDATES_FILE and read_workday_candidates()) — because a
-Workday board is identified by three coordinates, not one (see CLAUDE.md's
+Workday board is identified by three coordinates, not one (see docs/ARCHITECTURE.md's
 data model notes and gradmarket.sources.workday.WorkdayToken). A working
 candidate's report includes a sample of titles and locations (SAMPLE_SIZE),
 not just a job count — job count alone doesn't tell you whether a board is
@@ -98,7 +98,7 @@ EMPTY_NOTE = """\
 WORKABLE_SHELL_NOTE = """\
 # A nonsense Workable token 404s — it doesn't 200 with zero jobs — so a 200
 # here is a real, resolved account, same as the other three sources' empty
-# boards (see CLAUDE.md's empty-but-200 gotcha). These specific accounts are
+# boards (see docs/ARCHITECTURE.md's empty-but-200 gotcha). These specific accounts are
 # flagged as likely shells rather than dormant real companies because BOTH:
 #   - the account name is token-identical (case-insensitive), and
 #   - the account description is empty
@@ -194,7 +194,7 @@ def workable_likely_shell(token: str, name: str | None, description: str | None)
     """True only when there's no positive evidence this is a real, distinct
     account: name is missing-or-token-identical (case-insensitive) AND
     description is missing-or-empty. Either signal alone is enough to call
-    it likely real — see CLAUDE.md's data model section for why zero jobs
+    it likely real — see docs/ARCHITECTURE.md's data model section for why zero jobs
     alone isn't evidence of a wrong company."""
     name_differs = name is not None and name.strip().lower() != token.strip().lower()
     has_description = bool(description and description.strip())

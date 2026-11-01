@@ -45,7 +45,7 @@ SHRINK_GUARD_MIN_PREVIOUS = 10
 # small (~11MB/day of collection), so even 30 days is only ~330MB against a
 # 5GB volume — the constraint here is giving a bad extraction bug enough of
 # a window to be caught and fixed retroactively from raw payloads, not
-# storage (see CLAUDE.md and DestructiveFullRebuildRefused below).
+# storage (see docs/ARCHITECTURE.md and DestructiveFullRebuildRefused below).
 RAW_FETCHES_RETENTION_DAYS = 30
 
 
@@ -134,7 +134,7 @@ def process_row(conn: Any, row: dict, *, dry_run: bool = False) -> dict:
 
     Once this row's postings/versions are upserted and it's marked parsed,
     description text is stripped from its own raw_fetches.payload (reusing
-    gradmarket.raw_fetches_pruning.strip_descriptions — see CLAUDE.md) —
+    gradmarket.raw_fetches_pruning.strip_descriptions — see docs/ARCHITECTURE.md) —
     posting_versions.description_raw already holds that text and appends a
     new version whenever it changes, so keeping a second full copy in
     raw_fetches once a row is parsed is pure duplication, and it's most of
@@ -248,7 +248,7 @@ def _configured_source_companies() -> set[tuple[str, str]]:
     never equals the plain string db.get_open_source_companies returns for
     the same company, so every Workday company reads as orphaned and gets
     closed — this happened in production (workday/iberdrola, 221 postings,
-    see CLAUDE.md)."""
+    see docs/ARCHITECTURE.md)."""
     companies = load_companies(resolve_companies_file())
     return {(source_name, str(token)) for source_name, tokens in companies.items() for token in tokens}
 

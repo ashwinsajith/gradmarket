@@ -29,7 +29,7 @@ def resolve_companies_file() -> Path:
 def _build_token(source_name: str, entry: Any) -> CompanyToken:
     """Every source's companies.yaml entries are a bare string token, except
     Workday's — it needs three coordinates (tenant/dc/site) instead of one,
-    so its entries are objects, not strings (see CLAUDE.md's data model
+    so its entries are objects, not strings (see docs/ARCHITECTURE.md's data model
     notes). This is the one place that difference gets resolved; every
     reader downstream (ingest.py included) just gets back whichever token
     type the source actually uses, with no branching of its own."""

@@ -81,6 +81,10 @@ by more than half, close-detection is skipped and the event is recorded in
 `feed_anomalies` for review. A company migrating ATS looks exactly like every
 job closing at once, and guessing wrong corrupts history irreversibly.
 
+The full design — data-model invariants, the per-board floor rule, the web
+service, and the gotchas that have each bitten once — is in
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
 ---
 
 ## The site
@@ -330,7 +334,7 @@ src/gradmarket/
     static/    site.css, site.js, icons
 scripts/       discovery and operational utilities
 tests/         521 tests, fixtures only, no live HTTP
-docs/          classifier specification and evaluation
+docs/          ARCHITECTURE.md, classifier specification and evaluation
 ```
 
 MIT licensed. Job description text is the companies' copyright and is stored

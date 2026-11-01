@@ -263,7 +263,7 @@ def count_stripped_raw_fetches(conn: psycopg.Connection) -> int:
     evidence of a prior prune, not a false positive from an originally-empty
     description.
 
-    Backs parse_run.py's --full guard (see CLAUDE.md): --full truncates
+    Backs parse_run.py's --full guard (see docs/ARCHITECTURE.md): --full truncates
     posting_versions before rebuilding it from raw_fetches, which would
     permanently destroy description history for any row this counts.
 
@@ -368,7 +368,7 @@ def mark_latest_raw_fetch_unparsed(conn: psycopg.Connection, *, source: str, com
 def update_raw_fetch_payload(conn: psycopg.Connection, raw_fetch_id: int, payload: Any, *, commit: bool = True) -> None:
     """Overwrite one raw_fetches row's payload in place. Used by
     parse_run.process_row to strip description text immediately after that
-    row's own parse has succeeded — see CLAUDE.md: once a row is parsed,
+    row's own parse has succeeded — see docs/ARCHITECTURE.md: once a row is parsed,
     posting_versions.description_raw is the durable copy of its description
     history, so raw_fetches keeping a second full copy is pure duplication."""
     with conn.cursor() as cur:
@@ -507,7 +507,7 @@ def bulk_upsert_postings(
 
     updated_at is set to now() — real wall-clock write time, never
     observed_at (the raw row's fetched_at, i.e. when the data was
-    *collected* — see CLAUDE.md for why get_postings_to_classify's
+    *collected* — see docs/ARCHITECTURE.md for why get_postings_to_classify's
     staleness check needs write time instead) — but ONLY when this
     posting's content actually changed: an insert (a genuinely new
     posting), or an update whose incoming content_hash differs from what
@@ -522,7 +522,7 @@ def bulk_upsert_postings(
     actually stored. Without this, updated_at bumping on every single
     upsert turned classification from "reclassify what changed" into "in
     practice, reclassify the entire postings table every run" — a real
-    incident (~21k postings) this guard exists to prevent, see CLAUDE.md.
+    incident (~21k postings) this guard exists to prevent, see docs/ARCHITECTURE.md.
 
     Returns {external_id: posting_id}.
     """
@@ -691,7 +691,7 @@ def delete_old_parsed_raw_fetches(conn: psycopg.Connection, *, before: Any, comm
     collection gap is unrecoverable, while a parsed row's raw payload isn't
     — posting_versions is its durable copy, and parse_run.process_row
     already stripped its description text before this ever runs (see
-    CLAUDE.md). Backs parse_run.py's automatic retention sweep, run after
+    docs/ARCHITECTURE.md). Backs parse_run.py's automatic retention sweep, run after
     every parse pass so raw_fetches doesn't grow without bound. Returns
     rows deleted."""
     with conn.cursor() as cur:

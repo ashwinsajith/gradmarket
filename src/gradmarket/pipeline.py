@@ -35,7 +35,7 @@ whenever detail_run stored nothing new. Because this all happens before
 classify_run runs, a brand-new Workday posting's very first classification
 now sees its real description/location in the *same* cycle it was first
 seen in, not a day or more later. (get_postings_to_classify's own
-updated_at-based staleness check — see CLAUDE.md — is what makes even a
+updated_at-based staleness check — see docs/ARCHITECTURE.md — is what makes even a
 *later* cycle's join-in reliably trigger reclassification; this second
 parse pass is what makes that not usually even necessary.)
 

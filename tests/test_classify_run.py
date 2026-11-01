@@ -55,7 +55,7 @@ class FakeDB:
             # once, but the row has been written since (updated_at, real
             # write time — never posting_versions.observed_at, which is
             # just the raw row's own fetched_at and can be arbitrarily old
-            # for a re-parsed historical row; see CLAUDE.md).
+            # for a re-parsed historical row; see docs/ARCHITECTURE.md).
             updated_at = p.get("updated_at")
             return updated_at is not None and updated_at > p["classified_at"]
 

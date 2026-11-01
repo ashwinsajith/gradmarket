@@ -78,7 +78,7 @@ def test_fetch_single_page_success(monkeypatch):
 def test_fetch_passes_facets_through_as_applied_facets(monkeypatch):
     # Fixture is a representative sample of the Barclays filtered response
     # shape (real board: 973 total, 153 when filtered to these three
-    # workerSubType ids — see CLAUDE.md) — total here matches the fixture's
+    # workerSubType ids — see docs/ARCHITECTURE.md) — total here matches the fixture's
     # own 3 sample postings so this test isn't also exercising pagination.
     no_sleep(monkeypatch)
     token = workday.WorkdayToken(
@@ -163,7 +163,7 @@ def test_workday_token_facets_defaults_to_empty_dict():
     assert token.facets == {}
 
 
-# --- detail_filter default depends on facets (see CLAUDE.md and __post_init__) ---
+# --- detail_filter default depends on facets (see docs/ARCHITECTURE.md and __post_init__) ---
 
 
 def test_detail_filter_defaults_true_when_no_facets():

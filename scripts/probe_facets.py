@@ -6,7 +6,7 @@ requests the job list (limit=1 — only the facet metadata in the response is
 wanted, not the postings) and reports any facet value whose descriptor looks
 like an early-careers category (graduate, intern, apprentice, campus,
 placement, trainee, student, entry). This is how Barclays' workerSubType
-Graduate/Intern/Apprentice ids were found (see CLAUDE.md) — the ids this
+Graduate/Intern/Apprentice ids were found (see docs/ARCHITECTURE.md) — the ids this
 prints are what go into companies.yaml's `facets:` field for
 gradmarket.sources.workday.fetch() to send as appliedFacets. Facet ids are
 opaque and tenant-specific: never carry one over from a different board, and

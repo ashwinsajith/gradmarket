@@ -10,7 +10,7 @@ raw_details row yet (db.get_postings_missing_detail) and fetches each one.
 Retry/backoff for a single detail fetch lives entirely inside
 gradmarket.sources.workday.fetch_detail() already — this module doesn't add
 a second retry layer on top, it only paces between calls (INTER_REQUEST_SLEEP,
-1s — see CLAUDE.md's ~1 req/sec-per-host constraint) and records whatever
+1s — see docs/ARCHITECTURE.md's ~1 req/sec-per-host constraint) and records whatever
 fetch_detail() returns, success or failure alike, so a permanently-failing
 posting (e.g. a stale externalPath) doesn't get retried indefinitely by a
 future run — it simply gets a raw_details row with a null payload, which no
@@ -41,7 +41,7 @@ nothing to flag.
 
 dry_run here is scoped narrowly to this one step, not a full simulation of
 the pass: fetch_detail() still makes real requests and insert_raw_detail()
-still writes real raw_details rows either way (see CLAUDE.md on why a
+still writes real raw_details rows either way (see docs/ARCHITECTURE.md on why a
 detail-fetch's own retries/backoff are unconditional), since neither costs
 anything to redo and a real preview of "what would be fetched" would need
 to fetch to know. What dry_run skips is only the reparse flag itself —
@@ -104,7 +104,7 @@ def is_early_careers_title(title: str | None) -> bool:
 def _load_workday_tokens() -> dict[str, workday.WorkdayToken]:
     """company -> WorkdayToken, from companies.yaml's `workday:` list.
     config.load_companies already turns each entry into a WorkdayToken (see
-    CLAUDE.md's data model notes on Workday's three-part board identity);
+    docs/ARCHITECTURE.md's data model notes on Workday's three-part board identity);
     this just indexes them by company. Empty — not an error — when there's
     no `workday:` section yet."""
     companies = load_companies(resolve_companies_file())

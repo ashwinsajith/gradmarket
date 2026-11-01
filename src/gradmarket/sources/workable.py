@@ -22,7 +22,7 @@ twice (instanda returned ED3D202D57 twice, universalquantum returned
 paginate (see above). This broke the parse layer's multi-row upsert with
 CardinalityViolation: ON CONFLICT DO UPDATE command cannot affect row a
 second time. fetch() deduplicates by shortcode before returning, so
-raw_fetches never stores the same job twice (see CLAUDE.md's data model
+raw_fetches never stores the same job twice (see docs/ARCHITECTURE.md's data model
 notes — parse_run.process_row also deduplicates defensively for any source).
 
 Observed a 429 with Retry-After: 82392 (~22.9h) — this is a daily quota, not

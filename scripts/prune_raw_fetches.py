@@ -3,7 +3,7 @@
 
 Not part of the pipeline — run by hand when disk usage warrants it, not from
 ingest.py/parse_run.py/pipeline.py. raw_fetches keeps the full untouched
-payload from every daily fetch forever (see CLAUDE.md's "raw first, parse
+payload from every daily fetch forever (see docs/ARCHITECTURE.md's "raw first, parse
 later" rule), and the bulk of that is job description text duplicated across
 every snapshot of an unchanged posting. This script rewrites payloads older
 than a retention window (default 30 days) to drop description text while
@@ -31,7 +31,7 @@ id-set check per source.
 Once any row has been pruned, parse_run.py's --full refuses to run without
 --i-know-this-destroys-history: --full truncates posting_versions before
 rebuilding it from raw_fetches, which would permanently destroy the only
-surviving copy of description text for pruned rows (see CLAUDE.md).
+surviving copy of description text for pruned rows (see docs/ARCHITECTURE.md).
 
 Idempotent and safe to re-run: a row whose description field(s) are already
 None (already pruned, or never had one) is left alone — no extra write, no

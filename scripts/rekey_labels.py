@@ -50,7 +50,7 @@ def save_rows(path: Path, rows: list[dict]) -> None:
 
 
 def fetch_url_to_id_map(conn, urls: list[str]) -> dict[str, str]:
-    """One id per url. postings rows are never deleted (see CLAUDE.md), so a
+    """One id per url. postings rows are never deleted (see docs/ARCHITECTURE.md), so a
     url should resolve unless it was never a real posting to begin with; if a
     url somehow matches more than one row, the most recently observed wins."""
     with conn.cursor() as cur:

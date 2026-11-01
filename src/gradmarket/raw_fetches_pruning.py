@@ -29,7 +29,7 @@ DESCRIPTION_FIELDS: dict[str, tuple[str, ...]] = {
 
 def _jobs_list(payload: Any, source: str) -> list[Any] | None:
     """Lever's raw_fetches payload is a bare array; every other handled
-    source is a {"jobs": [...]} object (see CLAUDE.md's data model notes)."""
+    source is a {"jobs": [...]} object (see docs/ARCHITECTURE.md's data model notes)."""
     if source == "lever":
         return payload if isinstance(payload, list) else None
     if isinstance(payload, dict):

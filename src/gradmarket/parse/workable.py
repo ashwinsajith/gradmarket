@@ -1,7 +1,7 @@
 """Workable extractor: normalises raw_fetches payloads into ParsedPosting records.
 
 Workable jobs have no "id" field at all — shortcode is the unique
-identifier and is what external_id maps to for this source (see CLAUDE.md
+identifier and is what external_id maps to for this source (see docs/ARCHITECTURE.md
 data model notes).
 """
 
