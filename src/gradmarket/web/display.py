@@ -9,7 +9,23 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from gradmarket.classify.location import classify_location
+
 FALLBACK_LOCATION = "United Kingdom"
+
+# Every dash-like character the source data uses as a separator, folded to
+# hyphen-minus before any other step — GSK's locations use en dashes ("UK –
+# London – New Oxford Street"), and every pattern below only knows "-".
+# Non-breaking spaces travel with the same data, so they're folded too.
+_DASH_AND_SPACE_TRANSLATION = str.maketrans(
+    {
+        "\u2011": "-",  # non-breaking hyphen
+        "\u2012": "-",  # figure dash
+        "\u2013": "-",  # en dash
+        "\u2014": "-",  # em dash
+        "\u00a0": " ",  # non-breaking space
+    }
+)
 
 # The page only lists UK roles, so the country is noise — and it's what
 # pushes most rows past one line.
@@ -43,23 +59,34 @@ def _normalise_segment(segment: str) -> str:
 
 
 def display_location(raw: str | None) -> LocationDisplay:
-    """Steps 1-2 (strip a leading/trailing "United Kingdom") run on the
-    whole string first, as specified, then again per segment so a
-    multi-location value like "London, United Kingdom; Leeds, United
-    Kingdom" loses the country from every segment, not just the last.
+    """Steps 1-2 (strip a leading/trailing "United Kingdom") run on every
+    ";"-separated segment, which covers the whole string's start and end
+    too — so "London, United Kingdom; Leeds, United Kingdom" loses the
+    country from every segment, not just the last.
+
+    The row shows a UK location first: the page only lists UK roles, so in
+    "Brisbane, Queensland, Australia; London" the London segment is the
+    relevant one, and Brisbane goes behind "+1 more". UK-ness comes from the
+    location classifier, run on each segment's RAW text — after
+    normalisation "United Kingdom, Avonmouth Customer Delivery Hub" is just
+    "Avonmouth Customer Delivery Hub", which no longer looks British. With
+    no UK segment, the first location is shown. `full` always keeps the
+    original order.
 
     The first location is formatted the same whether or not more follow:
     "Hertfordshire, Ware; ..." shows "Hertfordshire, Ware +2 more".
     """
-    text = _WHITESPACE_RE.sub(" ", raw or "").strip(_STRAY_PUNCTUATION)
-    text = _LEADING_COUNTRY_RE.sub("", text)
-    text = _TRAILING_COUNTRY_RE.sub("", text)
+    text = (raw or "").translate(_DASH_AND_SPACE_TRANSLATION)
 
     segments: list[str] = []
+    uk_segments: set[str] = set()
     for part in text.split(";"):
         segment = _normalise_segment(part)
-        if segment and segment not in segments:
-            segments.append(segment)
+        if not segment or segment in segments:
+            continue
+        segments.append(segment)
+        if classify_location(part) == "uk":
+            uk_segments.add(segment)
 
     if not segments:
         return LocationDisplay(short=FALLBACK_LOCATION, more=0, full=FALLBACK_LOCATION)
@@ -71,4 +98,5 @@ def display_location(raw: str | None) -> LocationDisplay:
     if not locations:
         return LocationDisplay(short=" · ".join(qualifiers), more=0, full=full)
 
-    return LocationDisplay(short=" · ".join([*qualifiers, locations[0]]), more=len(locations) - 1, full=full)
+    shown = next((s for s in locations if s in uk_segments), locations[0])
+    return LocationDisplay(short=" · ".join([*qualifiers, shown]), more=len(locations) - 1, full=full)
