@@ -1,6 +1,6 @@
 // GradMarket — progressive enhancement over server-rendered markup. No data
 // fetch: everything here works on the DOM the server sent, and the page is
-// complete without it (no reveal, wordmark always shown, groups static).
+// complete without it (no reveal, no smooth scroll, groups static).
 "use strict";
 
 (function () {
@@ -23,19 +23,16 @@
     revealed.forEach(function (el) { revealObserver.observe(el); });
   }
 
-  // --- nav wordmark: only once the hero's own name has scrolled away ---
-  var nav = document.querySelector("[data-nav]");
-  var hero = document.querySelector("[data-hero]");
-  if (nav && hero && hasObserver) {
-    nav.classList.add("nav--brand-hidden");
-    // The margin trims the sticky nav's height off the viewport, so the hero
-    // counts as gone once it's behind the nav. intersectionRatio > 0 because
-    // a hero whose bottom edge exactly touches the viewport's top edge still
-    // reports isIntersecting — e.g. right after following the #roles link.
-    new IntersectionObserver(function (entries) {
-      var entry = entries[0];
-      nav.classList.toggle("nav--brand-hidden", entry.isIntersecting && entry.intersectionRatio > 0);
-    }, { rootMargin: "-" + nav.offsetHeight + "px 0px 0px 0px" }).observe(hero);
+  // --- logo: back to the top, smoothly unless motion is reduced ---
+  // Without JS the link just loads "/", which lands at the top anyway.
+  var home = document.querySelector("[data-home]");
+  if (home) {
+    home.addEventListener("click", function (e) {
+      if (window.location.pathname !== "/") return;
+      e.preventDefault();
+      window.scrollTo({ top: 0, behavior: reduceMotion ? "auto" : "smooth" });
+      if (window.location.hash) history.replaceState(null, "", "/");
+    });
   }
 
   // --- arrivals tooltip ---

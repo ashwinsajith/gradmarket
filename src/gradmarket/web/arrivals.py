@@ -17,6 +17,13 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 
 RECENT_DAYS = 7
+# A final month this short gets its label right-aligned, so "NOV" on 1 Nov
+# reads leftwards from the chart's edge instead of running off it.
+SHORT_TRAILING_MONTH_DAYS = 7
+
+# Fixed, not strftime("%b"): month names must not depend on the server's
+# locale.
+MONTH_ABBRS = ("JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC")
 
 
 @dataclass(frozen=True)
@@ -29,9 +36,10 @@ class ArrivalDay:
 
 @dataclass(frozen=True)
 class MonthSpan:
-    initial: str
+    abbr: str  # "AUG"
     name: str
     days: int  # how many of the chart's days fall in this month
+    label_at_end: bool = False  # see SHORT_TRAILING_MONTH_DAYS
 
 
 @dataclass(frozen=True)
@@ -78,8 +86,11 @@ def build_arrivals(counts: dict[date, int], *, start: date | None, today: date) 
     for d in span:
         if months and months[-1].name == d.strftime("%B"):
             last = months[-1]
-            months[-1] = MonthSpan(initial=last.initial, name=last.name, days=last.days + 1)
+            months[-1] = MonthSpan(abbr=last.abbr, name=last.name, days=last.days + 1)
         else:
-            months.append(MonthSpan(initial=d.strftime("%b")[0], name=d.strftime("%B"), days=1))
+            months.append(MonthSpan(abbr=MONTH_ABBRS[d.month - 1], name=d.strftime("%B"), days=1))
+    if len(months) > 1 and months[-1].days < SHORT_TRAILING_MONTH_DAYS:
+        last = months[-1]
+        months[-1] = MonthSpan(abbr=last.abbr, name=last.name, days=last.days, label_at_end=True)
 
     return Arrivals(days=days, months=tuple(months), peak=peak)

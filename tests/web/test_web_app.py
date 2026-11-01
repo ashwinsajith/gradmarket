@@ -253,11 +253,28 @@ def test_collecting_since_shows_the_full_date_under_a_plain_label():
     assert ">Collecting since</dt>" in html
 
 
-def test_nav_wordmark_is_in_the_markup_for_no_js_and_hidden_by_script_only():
+def test_nav_logo_mark_is_always_shown_and_links_home():
     html = _page()
+    home = re.search(r'<a class="nav__home"[^>]*>.*?</a>', html, re.DOTALL).group(0)
 
-    assert 'class="nav__brand"' in html
-    assert "nav--brand-hidden" not in html  # site.js adds it; without JS the wordmark shows
+    assert 'href="/"' in home
+    assert 'aria-label="GradMarket — back to top"' in home
+    assert '<img class="nav__mark" src="/static/mark.svg" width="26" height="26" alt="">' in home
+    # Both the mark and the wordmark are inside the one link.
+    assert '<span class="nav__brand" aria-hidden="true">GradMarket</span>' in home
+
+
+def test_nav_wordmark_is_always_visible_with_no_script_or_style_hiding_it():
+    """The wordmark used to fade in once the hero scrolled away. It's static
+    now: no class toggles it, no rule hides it, no observer watches the hero."""
+    html = _page()
+    css = (STATIC / "site.css").read_text()
+    js = (STATIC / "site.js").read_text()
+
+    assert "brand-hidden" not in html + css + js
+    assert "data-hero" not in html and "data-hero" not in js
+    brand_rule = css.split(".nav__brand {", 1)[1].split("}", 1)[0]
+    assert "opacity" not in brand_rule and "visibility" not in brand_rule
 
 
 # --- arrivals ---
@@ -404,11 +421,9 @@ def test_days_with_arrivals_are_marked_for_a_minimum_height_and_empty_days_are_n
 
 
 ICONS = {"icon-16.png": 16, "icon-32.png": 32, "icon-180.png": 180, "icon-512.png": 512}
-# Which mark each size uses. Both tab sizes are solid — retina tabs request
-# the 32px icon for a 16px slot — and the dot-matrix mark starts at 180.
-SOLID_ICONS = {"icon-16.png", "icon-32.png"}
-DOT_MATRIX_ICONS = {"icon-180.png", "icon-512.png"}
-UNLIT_CELL = (0x2A, 0x2E, 0x34)  # only the dot-matrix mark has unlit cells
+TILE = (0x0B, 0x0C, 0x0F)
+UNLIT_CELL = (0x2A, 0x2E, 0x34)
+STATIC = Path(__file__).resolve().parents[2] / "src" / "gradmarket" / "web" / "static"
 
 
 def test_icon_links_and_metadata():
@@ -436,19 +451,51 @@ def test_icon_files_are_served_as_png_at_their_stated_size():
             assert int.from_bytes(resp.content[20:24], "big") == size, name
 
 
-def test_each_icon_size_uses_the_right_mark():
-    """Told apart by the dot-matrix mark's unlit-cell colour, which the solid
-    mark never contains."""
+def _near(rgb: tuple[int, ...], target: tuple[int, int, int], tolerance: int = 3) -> bool:
+    return all(abs(a - b) <= tolerance for a, b in zip(rgb, target))
+
+
+def test_every_icon_is_the_dot_matrix_mark():
+    """One mark at every size: each icon shows the dot-matrix grid's unlit
+    cells — including 16 and 32, which used to be a solid letterform."""
     image = pytest.importorskip("PIL.Image")
-    static = Path(__file__).resolve().parents[2] / "src" / "gradmarket" / "web" / "static"
-    assert SOLID_ICONS | DOT_MATRIX_ICONS == set(ICONS)
+    for name in ICONS:
+        colours = image.open(STATIC / name).convert("RGB").getcolors(maxcolors=1 << 20)
+        assert any(_near(rgb, UNLIT_CELL, tolerance=8) for _, rgb in colours), name
 
-    def unlit_pixels(name: str) -> int:
-        colours = image.open(static / name).convert("RGB").getcolors(maxcolors=1 << 20)
-        return sum(n for n, rgb in colours if all(abs(a - b) <= 3 for a, b in zip(rgb, UNLIT_CELL)))
 
-    for name in SOLID_ICONS:
-        assert unlit_pixels(name) == 0, name
-    for name in DOT_MATRIX_ICONS:
-        assert unlit_pixels(name) > 0, name
+def test_every_icon_has_non_background_pixels_in_its_middle_third():
+    """The mark is actually drawn, and drawn in the middle — not an empty
+    tile, and not shifted off-centre."""
+    image = pytest.importorskip("PIL.Image")
+    for name, size in ICONS.items():
+        icon = image.open(STATIC / name).convert("RGB")
+        third = size // 3
+        middle = icon.crop((third, third, size - third, size - third))
+        colours = middle.getcolors(maxcolors=1 << 20)
+        assert any(not _near(rgb, TILE, tolerance=6) for _, rgb in colours), name
+
+
+def test_chart_month_labels_are_three_letter_abbreviations():
+    html = _page(_snapshot([], arrival_counts={date(2026, 9, 3): 4}))
+    months = html.split('class="arrivals__months', 1)[1].split("</div>", 1)[0]
+
+    labels = re.findall(r">([A-Z]{3})</span>", months)
+    assert labels == ["AUG", "SEP", "OCT", "NOV"]
+    assert 'class="arrivals__month--end" style="flex-grow: 1">NOV<' in months
+
+
+def test_nav_mark_svg_is_the_dot_matrix_g():
+    """mark.svg comes from make_icons.py's DOT_G grid: a tile plus 5x7 cells —
+    16 lit, 1 accent (the crossbar's end), 18 unlit."""
+    with _client(_fake_snapshot) as client:
+        resp = client.get("/static/mark.svg")
+
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("image/svg+xml")
+    fills = re.findall(r'fill="(#[0-9a-f]{6})"', resp.text)
+    assert fills[0] == "#0b0c0f"  # the tile
+    cells = fills[1:]
+    assert len(cells) == 35
+    assert (cells.count("#f2f3f5"), cells.count("#d99a2b"), cells.count("#2a2e34")) == (16, 1, 18)
 

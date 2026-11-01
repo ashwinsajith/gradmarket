@@ -151,22 +151,30 @@ a:hover {
   height: 100%;
 }
 
+.nav__home {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  transition: opacity 150ms var(--ease);
+}
+
+.nav__home:hover {
+  opacity: 0.8;
+  text-decoration: none;
+}
+
+.nav__mark {
+  display: block;
+  flex: none;
+  width: 26px;
+  height: 26px;
+}
+
 .nav__brand {
   font-family: var(--font-display);
   font-size: 0.9375rem;
   font-weight: 600;
   letter-spacing: -0.01em;
-  transition: opacity 200ms var(--ease);
-}
-
-/* While the hero's own name is on screen. visibility (switched after the
- * fade) keeps the hidden link out of the tab order. */
-.nav--brand-hidden .nav__brand {
-  opacity: 0;
-  visibility: hidden;
-  transition:
-    opacity 200ms var(--ease),
-    visibility 0s linear 200ms;
 }
 
 .nav__links {
@@ -352,7 +360,14 @@ a:hover {
 .arrivals__months span {
   flex-basis: 0;
   min-width: 0;
-  overflow: hidden;
+  white-space: nowrap;
+}
+
+/* A short final month: the label hugs the chart's right edge and overflows
+ * leftwards (flex-end alignment overflows towards the start). */
+.arrivals__month--end {
+  display: flex;
+  justify-content: flex-end;
 }
 
 .arrivals__note {
@@ -759,8 +774,7 @@ td.col-location {
     transition: none;
   }
 
-  .nav__brand,
-  .nav--brand-hidden .nav__brand {
+  .nav__home {
     transition: none;
   }
 }

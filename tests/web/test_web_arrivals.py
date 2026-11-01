@@ -54,16 +54,36 @@ def test_most_recent_seven_days_are_recent():
     assert recent == [TODAY - timedelta(days=i) for i in reversed(range(RECENT_DAYS))]
 
 
-def test_month_spans_cover_every_day_with_initials():
+def test_month_spans_cover_every_day_with_three_letter_labels():
     arrivals = build_arrivals({}, start=START, today=TODAY)
 
-    assert [(m.initial, m.name, m.days) for m in arrivals.months] == [
-        ("A", "August", 22),
-        ("S", "September", 30),
-        ("O", "October", 31),
-        ("N", "November", 1),
+    assert [(m.abbr, m.name, m.days) for m in arrivals.months] == [
+        ("AUG", "August", 22),
+        ("SEP", "September", 30),
+        ("OCT", "October", 31),
+        ("NOV", "November", 1),
     ]
     assert sum(m.days for m in arrivals.months) == len(arrivals.days)
+
+
+def test_short_final_month_label_sits_at_the_chart_end():
+    months = build_arrivals({}, start=START, today=TODAY).months
+
+    assert months[-1].label_at_end  # 1 day of November
+    assert not any(m.label_at_end for m in months[:-1])
+
+
+def test_final_month_label_returns_to_its_start_once_the_month_is_a_week_old():
+    months = build_arrivals({}, start=START, today=date(2026, 11, 7)).months
+
+    assert months[-1].days == 7
+    assert not months[-1].label_at_end
+
+
+def test_a_single_month_chart_never_end_aligns():
+    months = build_arrivals({}, start=date(2026, 8, 10), today=date(2026, 8, 12)).months
+
+    assert len(months) == 1 and not months[0].label_at_end
 
 
 def test_empty_without_a_start_or_with_a_future_start():
