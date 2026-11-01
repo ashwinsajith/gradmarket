@@ -1,9 +1,16 @@
 from __future__ import annotations
 
+from datetime import date
+
 import pytest
 
 from gradmarket.web.queries import Stats
-from gradmarket.web.store import Snapshot, SnapshotCache, count_configured_boards
+from gradmarket.web.store import (
+    Snapshot,
+    SnapshotCache,
+    count_configured_boards,
+    make_snapshot,
+)
 
 
 class FakeClock:
@@ -23,7 +30,13 @@ class CountingLoader:
         self.calls += 1
         if self.fail:
             raise RuntimeError("db down")
-        return Snapshot(roles=[], stats=Stats(postings_collected=self.calls, collecting_since=None), boards_monitored=1)
+        return make_snapshot(
+            roles=[],
+            stats=Stats(postings_collected=self.calls, collecting_since=None),
+            boards_monitored=1,
+            arrival_counts={},
+            today=date(2026, 11, 1),
+        )
 
 
 def _cache() -> tuple[SnapshotCache, CountingLoader, FakeClock]:

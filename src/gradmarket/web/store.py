@@ -13,13 +13,21 @@ import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 import psycopg
 from psycopg_pool import ConnectionPool
 
 from gradmarket.config import load_companies, resolve_companies_file
-from gradmarket.web.queries import Role, Stats, fetch_roles, fetch_stats
+from gradmarket.web.arrivals import Arrivals, build_arrivals
+from gradmarket.web.display import count_cities
+from gradmarket.web.queries import (
+    Role,
+    Stats,
+    fetch_arrival_counts,
+    fetch_roles,
+    fetch_stats,
+)
 
 log = logging.getLogger(__name__)
 
@@ -42,6 +50,23 @@ class Snapshot:
     roles: list[Role]
     stats: Stats
     boards_monitored: int
+    arrivals: Arrivals
+    city_counts: list[tuple[str, int]]  # the city filter's options, most postings first
+
+
+def make_snapshot(
+    *, roles: list[Role], stats: Stats, boards_monitored: int, arrival_counts: dict[date, int], today: date
+) -> Snapshot:
+    """Everything the page shows that's derived from more than one row is
+    computed here, once per refresh — never per request."""
+    start = stats.collecting_since.astimezone(UTC).date() if stats.collecting_since else None
+    return Snapshot(
+        roles=roles,
+        stats=stats,
+        boards_monitored=boards_monitored,
+        arrivals=build_arrivals(arrival_counts, start=start, today=today),
+        city_counts=count_cities(r.cities for r in roles),
+    )
 
 
 def _configure(conn: psycopg.Connection) -> None:
@@ -78,10 +103,13 @@ def count_configured_boards() -> int:
 
 
 def load_snapshot(conn: psycopg.Connection, *, boards_monitored: int, now: datetime | None = None) -> Snapshot:
-    return Snapshot(
-        roles=fetch_roles(conn, now=now or datetime.now(UTC)),
+    now = now or datetime.now(UTC)
+    return make_snapshot(
+        roles=fetch_roles(conn, now=now),
         stats=fetch_stats(conn),
         boards_monitored=boards_monitored,
+        arrival_counts=fetch_arrival_counts(conn),
+        today=now.astimezone(UTC).date(),
     )
 
 

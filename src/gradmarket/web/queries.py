@@ -30,13 +30,17 @@ error is conservative — a genuinely new posting reads as a floor
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any
 
 import psycopg
 from psycopg.rows import dict_row
 
+from gradmarket.web.display import derive_cities
+
 NEW_WINDOW = timedelta(days=7)
+THIS_WEEK_MAX_DAYS = 7
+THIS_MONTH_MAX_DAYS = 30
 FLOOR_WINDOW = timedelta(days=1)
 LONG_RUNNING_DAYS = 60
 
@@ -55,8 +59,12 @@ PUBLIC_COLUMNS = (
     "url",
 )
 
-OPEN_UK_EARLY_ROLES_SQL = f"""
-WITH board_start AS (
+# Each board's first observation (see module docstring). Shared by the
+# roles and arrivals queries so "is this posting a floor?" has exactly one
+# answer across the page — the age label and the arrivals chart can't
+# disagree about it.
+BOARD_START_CTE = """
+board_start AS (
     SELECT source, company, min(observed_at) AS started_at
     FROM (
         SELECT source, company, min(fetched_at) AS observed_at
@@ -69,6 +77,10 @@ WITH board_start AS (
     ) observations
     GROUP BY source, company
 )
+"""
+
+OPEN_UK_EARLY_ROLES_SQL = f"""
+WITH {BOARD_START_CTE}
 SELECT {", ".join(f"p.{c}" for c in PUBLIC_COLUMNS)}, b.started_at AS board_started_at
 FROM postings p
 JOIN board_start b ON b.source = p.source AND b.company = p.company
@@ -84,6 +96,25 @@ ORDER BY p.first_seen_at DESC, p.id DESC
 STATS_SQL = """
 SELECT count(*) AS postings_collected, min(first_seen_at) AS collecting_since
 FROM postings
+"""
+
+# Genuine arrivals per UTC day: postings first seen, open or since closed
+# (an arrival is a fact about the day it appeared, not about whether it's
+# still up) — minus floors. A posting first seen within FLOOR_WINDOW of its
+# board's first observation was already live when we started watching
+# that board, so it isn't an arrival at all; this is the same test as
+# derive_role's age_is_floor. Excluding floors is what removes the spikes
+# on days the board list grew — including collection's first day — with
+# no list of special dates to maintain.
+ARRIVALS_SQL = f"""
+WITH {BOARD_START_CTE}
+SELECT (p.first_seen_at AT TIME ZONE 'UTC')::date AS day, count(*) AS n
+FROM postings p
+JOIN board_start b ON b.source = p.source AND b.company = p.company
+WHERE p.location_class = 'uk'
+  AND p.seniority_class = 'early'
+  AND p.first_seen_at >= b.started_at + %(floor_window)s
+GROUP BY 1
 """
 
 
@@ -104,6 +135,8 @@ class Role:
     is_long_running: bool
     age_is_floor: bool
     age_label: str
+    freshness_group: str  # "this_week" | "this_month" | "earlier"
+    cities: tuple[str, ...]  # for the city filter; see display.derive_cities
 
     def to_json(self) -> dict[str, Any]:
         out = asdict(self)
@@ -122,6 +155,21 @@ def _age_label(days: int, *, is_floor: bool) -> str:
     if is_floor:
         return f"{days}+ days"
     return "1 day" if days == 1 else f"{days} days"
+
+
+def freshness_group(days: int, *, is_floor: bool) -> str:
+    """The list's grouping: first seen 0-7 days ago, 8-30, or 31+.
+
+    A floored posting never lands in "this week": its real age is unknown,
+    and unknown can't be presented as fresh. One on a board added this week
+    — a 3-day floor, say — goes to "this month" instead. Otherwise floors
+    group by their floor value, which is a lower bound, so "this month" and
+    "earlier" stay true. They keep the "N+ days" label and no "New" tag."""
+    if days <= THIS_WEEK_MAX_DAYS and not is_floor:
+        return "this_week"
+    if days <= THIS_MONTH_MAX_DAYS:
+        return "this_month"
+    return "earlier"
 
 
 def derive_role(row: dict[str, Any], *, now: datetime) -> Role:
@@ -149,6 +197,8 @@ def derive_role(row: dict[str, Any], *, now: datetime) -> Role:
         is_long_running=days > LONG_RUNNING_DAYS,
         age_is_floor=is_floor,
         age_label=_age_label(days, is_floor=is_floor),
+        freshness_group=freshness_group(days, is_floor=is_floor),
+        cities=derive_cities(row["location"]),
     )
 
 
@@ -156,6 +206,12 @@ def fetch_roles(conn: psycopg.Connection, *, now: datetime) -> list[Role]:
     with conn.cursor(row_factory=dict_row) as cur:
         cur.execute(OPEN_UK_EARLY_ROLES_SQL)
         return [derive_role(row, now=now) for row in cur.fetchall()]
+
+
+def fetch_arrival_counts(conn: psycopg.Connection) -> dict[date, int]:
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(ARRIVALS_SQL, {"floor_window": FLOOR_WINDOW})
+        return {row["day"]: row["n"] for row in cur.fetchall()}
 
 
 def fetch_stats(conn: psycopg.Connection) -> Stats:

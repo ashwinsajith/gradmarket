@@ -1,7 +1,8 @@
 /* GradMarket — public page.
  *
- * Type scale has two ends and nothing between 1rem and 2.5rem: display
- * (headline, stats, section titles) and micro-labels/rows. Keep it that way.
+ * Type scale has two bands and nothing between 1.0625rem and 2.5rem:
+ * display (name, tagline, stats, section titles) and body (subhead, rows,
+ * micro-labels). Keep it that way.
  * Colour is greyscale plus one accent, used only for "new" and focus rings.
  */
 
@@ -20,6 +21,7 @@
   --wrap: 1180px;
   --gutter: 32px;
   --nav-h: 64px;
+  --filters-h: 73px; /* measured and updated by site.js; this is the unwrapped height */
   --row-h: 64px;
   --ease: cubic-bezier(0.16, 1, 0.3, 1);
 
@@ -134,8 +136,12 @@ a:hover {
 /* --- nav --- */
 
 .nav {
+  position: sticky;
+  top: 0;
+  z-index: 6;
   height: var(--nav-h);
   border-bottom: 1px solid var(--hairline);
+  background: var(--bg);
 }
 
 .nav__inner {
@@ -150,6 +156,17 @@ a:hover {
   font-size: 0.9375rem;
   font-weight: 600;
   letter-spacing: -0.01em;
+  transition: opacity 200ms var(--ease);
+}
+
+/* While the hero's own name is on screen. visibility (switched after the
+ * fade) keeps the hidden link out of the tab order. */
+.nav--brand-hidden .nav__brand {
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity 200ms var(--ease),
+    visibility 0s linear 200ms;
 }
 
 .nav__links {
@@ -171,29 +188,61 @@ a:hover {
   border-bottom: 1px solid var(--hairline);
 }
 
+/* The content's own height fills the hero; padding only keeps it off the
+ * nav and the closing hairline. */
 .hero__inner {
   display: flex;
   flex-direction: column;
   justify-content: flex-end;
-  min-height: calc(100vh - var(--nav-h));
-  min-height: calc(100svh - var(--nav-h));
-  padding-top: 160px;
-  padding-bottom: 72px;
+  min-height: 88vh;
+  min-height: 88svh;
+  padding-top: 64px;
+  padding-bottom: 40px;
 }
 
-.hero__title {
-  max-width: 14ch;
-  font-size: clamp(2.75rem, 6vw, 4.5rem);
+.hero__name {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: clamp(4rem, 10vw, 8.5rem);
+  font-weight: 600;
+  letter-spacing: -0.04em;
+  line-height: 0.95;
+  color: var(--text);
+}
+
+.hero__tagline {
+  margin: 24px 0 0;
+  font-family: var(--font-display);
+  font-size: 2.5rem;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+  color: var(--muted);
+}
+
+.hero__sub {
+  max-width: 52ch;
+  margin: 20px 0 0;
+  font-size: 1.0625rem;
+  font-weight: 400;
+  line-height: 1.55;
+  /* --muted at 80% as a colour, not opacity — the reveal animation owns
+   * opacity. */
+  color: color-mix(in srgb, var(--muted) 80%, transparent);
 }
 
 /* Baseline grid: every stat shares one row, values sit on a common
  * baseline, captions on a second one beneath. */
 .stats {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  /* The date is the widest value ("10 Aug 2026"): its column sizes to it,
+   * the three counts share the rest. */
+  grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
   gap: 0 var(--gutter);
-  align-items: end;
-  margin: 96px 0 0;
+  /* Stretch, so every stat's top hairline lines up even when one value
+   * wraps; .stat's column-reverse keeps values bottom-aligned within. */
+  align-items: stretch;
+  margin: 72px 0 0;
 }
 
 .stat {
@@ -212,6 +261,90 @@ a:hover {
   letter-spacing: -0.03em;
   line-height: 1;
   white-space: nowrap;
+}
+
+/* --- arrivals strip --- */
+
+.arrivals {
+  margin: 56px 0 0;
+}
+
+.arrivals__head {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+.arrivals__plot {
+  position: relative;
+}
+
+.arrivals__bars {
+  display: flex;
+  align-items: stretch;
+  gap: 1px;
+  height: 80px;
+}
+
+/* Each bar is a full-height hover target; its ::after is the visible fill,
+ * so a zero day can still be hovered. */
+.bar {
+  display: flex;
+  flex: 1 1 0;
+  align-items: flex-end;
+  min-width: 0;
+}
+
+.bar::after {
+  content: "";
+  width: 100%;
+  height: var(--h);
+  background: var(--muted);
+  opacity: 0.55;
+}
+
+.bar--recent::after {
+  background: var(--accent);
+  opacity: 1;
+}
+
+.bar:hover::after {
+  opacity: 0.9;
+}
+
+.bar--recent:hover::after {
+  opacity: 1;
+}
+
+.arrivals__tip {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  z-index: 2;
+  padding: 6px 8px;
+  border: 1px solid var(--hairline);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.6875rem;
+  white-space: nowrap;
+  pointer-events: none;
+  transform: translateX(-50%);
+}
+
+.arrivals__months {
+  display: flex;
+  gap: 1px;
+  margin-top: 8px;
+}
+
+.arrivals__months span {
+  flex-basis: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.arrivals__note {
+  margin-top: 12px;
 }
 
 /* --- section heads --- */
@@ -235,7 +368,7 @@ a:hover {
 
 .filters {
   position: sticky;
-  top: 0;
+  top: var(--nav-h);
   z-index: 5;
   margin: 0;
   border-bottom: 1px solid var(--hairline);
@@ -359,6 +492,56 @@ input[type="checkbox"]:checked::before {
   align-items: center;
   height: 40px;
   margin-left: auto;
+}
+
+/* --- freshness groups --- */
+
+.group__head th {
+  position: sticky;
+  top: calc(var(--nav-h) + var(--filters-h));
+  z-index: 2;
+  height: 44px;
+  padding: 0;
+  padding-top: 20px;
+  border-bottom: 1px solid var(--hairline);
+  background: var(--bg);
+  text-align: left;
+  vertical-align: bottom;
+  padding-bottom: 10px;
+}
+
+.group__name {
+  color: var(--text);
+}
+
+.group__span,
+.group__count {
+  margin-left: 12px;
+}
+
+.sort-note {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.sort-note[hidden] {
+  display: none;
+}
+
+.sort-note button {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.2em;
+  cursor: pointer;
 }
 
 /* --- rows --- */
@@ -563,6 +746,11 @@ td.col-location {
     transform: none;
     transition: none;
   }
+
+  .nav__brand,
+  .nav--brand-hidden .nav__brand {
+    transition: none;
+  }
 }
 
 /* --- mobile --- */
@@ -575,7 +763,22 @@ td.col-location {
   .stats {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 32px 16px;
-    margin-top: 64px;
+    margin-top: 56px;
+  }
+
+  /* "10 Aug 2026" is wider than half a phone: let it break after the month. */
+  .stat--date .stat__value {
+    white-space: normal;
+  }
+
+  /* clamp(4rem, ...)'s floor is wider than a phone: "GradMarket." at
+   * 4rem is ~334px against ~326px of content width at 390px. */
+  .hero__name {
+    font-size: 15.5vw;
+  }
+
+  .group__head th {
+    top: var(--nav-h); /* the filter bar isn't sticky here */
   }
 
   .nav__links {

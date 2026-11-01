@@ -22,6 +22,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request, Response
@@ -30,6 +31,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from gradmarket.web.display import display_location
+from gradmarket.web.queries import Role
 from gradmarket.web.store import Snapshot, SnapshotCache, make_pool, pooled_loader
 
 log = logging.getLogger(__name__)
@@ -44,6 +46,26 @@ def _day_month(d: datetime) -> str:
 
 def _full_date(d: datetime) -> str:
     return f"{d.day} {d:%b %Y}"
+
+
+# The list's freshness groups, in display order: (key, heading, range).
+# Keys match queries.freshness_group().
+FRESHNESS_GROUPS = [
+    ("this_week", "This week", "0–7 days"),
+    ("this_month", "This month", "8–30 days"),
+    ("earlier", "Earlier", "31+ days"),
+]
+
+
+def group_roles(roles: list[Role]) -> list[dict[str, Any]]:
+    """Roles split by freshness group, server order kept within each. An
+    empty group is left out entirely, never shown as a zero."""
+    groups = []
+    for key, heading, span in FRESHNESS_GROUPS:
+        members = [r for r in roles if r.freshness_group == key]
+        if members:
+            groups.append({"key": key, "heading": heading, "span": span, "roles": members})
+    return groups
 
 
 templates = Jinja2Templates(directory=WEB_DIR / "templates")
@@ -94,6 +116,9 @@ def create_app(cache: SnapshotCache | None = None) -> FastAPI:
             "index.html",
             {
                 "roles": roles,
+                "groups": group_roles(roles),
+                "arrivals": snapshot.arrivals,
+                "city_counts": snapshot.city_counts,
                 "stats": snapshot.stats,
                 "boards_monitored": snapshot.boards_monitored,
                 "companies": sorted({r.company for r in roles}),
@@ -111,6 +136,13 @@ def create_app(cache: SnapshotCache | None = None) -> FastAPI:
         if isinstance(snapshot, JSONResponse):
             return snapshot
         return JSONResponse({"count": len(snapshot.roles), "roles": [r.to_json() for r in snapshot.roles]})
+
+    @app.get("/api/arrivals")
+    def api_arrivals() -> JSONResponse:
+        snapshot = snapshot_or_503()
+        if isinstance(snapshot, JSONResponse):
+            return snapshot
+        return JSONResponse(snapshot.arrivals.to_json())
 
     @app.get("/healthz")
     def healthz() -> JSONResponse:

@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import pytest
 
-from gradmarket.web.display import LocationDisplay, display_location
+from gradmarket.web.display import (
+    LocationDisplay,
+    count_cities,
+    derive_cities,
+    display_location,
+)
 
 EXAMPLES = [
         (
@@ -165,3 +170,55 @@ def test_qualifiers_stay_in_front_of_the_reordered_location():
 def test_no_uk_segment_falls_back_to_the_first_location():
     assert display_location("Brisbane, Australia; Sydney, Australia").short == "Brisbane, Australia"
 
+
+
+# --- city filter ---
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("London", ("London",)),
+        ("Edinburgh, Scotland", ("Edinburgh",)),
+        ("Manchester; Leeds", ("Manchester", "Leeds")),
+        ("United Kingdom, UK - Hertfordshire - Stevenage", ("Stevenage",)),
+        ("Milton Keynes", ("Milton Keynes",)),  # not a classifier city, still a filter city
+        ("UK – Edinburgh", ("Edinburgh",)),
+        ("Newcastle upon Tyne", ("Newcastle",)),
+    ],
+)
+def test_derive_cities(raw, expected):
+    assert derive_cities(raw) == expected
+
+
+def test_foreign_namesakes_are_not_uk_cities():
+    assert derive_cities("Cambridge, MA; London") == ("London",)
+    assert derive_cities("Plymouth, MA; Leeds") == ("Leeds",)
+    assert derive_cities("United States of America, Cambridge, MA; London") == ("London",)
+
+
+def test_city_list_mixed_with_foreign_cities_keeps_the_uk_one():
+    assert derive_cities("London, Montreal, Singapore") == ("London",)
+
+
+def test_street_names_are_not_cities():
+    assert derive_cities("UK – London – New Oxford Street") == ("London",)
+    assert derive_cities("London Road, Reading") == ("Reading",)
+    assert derive_cities("Oxford Circus, London") == ("London",)
+
+
+def test_remote():
+    assert derive_cities("Remote - UK") == ("Remote",)
+    assert derive_cities("Remote; London") == ("London", "Remote")
+    assert derive_cities("Remote - US; Leeds") == ("Leeds",)  # foreign remote doesn't count
+
+
+def test_other_when_nothing_matches():
+    assert derive_cities("United Kingdom, Avonmouth Customer Delivery Hub") == ("Other",)
+    assert derive_cities(None) == ("Other",)
+
+
+def test_count_cities_most_postings_first_ties_alphabetical_multi_city_counted_in_each():
+    counts = count_cities([("London",), ("Leeds", "London"), ("Other",), ("Bristol",), ("Leeds",)])
+
+    assert counts == [("Leeds", 2), ("London", 2), ("Bristol", 1), ("Other", 1)]

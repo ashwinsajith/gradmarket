@@ -19,8 +19,10 @@
 <body>
   <a class="skip-link" href="#roles">Skip to roles</a>
 
-  <header class="nav">
+  <header class="nav" data-nav>
     <div class="wrap nav__inner">
+      {#- Hidden while the hero's own name is on screen; site.js fades it in
+          once the hero scrolls away. Shown outright without JS. #}
       <a class="nav__brand" href="/">GradMarket</a>
       <nav aria-label="Primary">
         <ul class="nav__links micro">
@@ -33,31 +35,69 @@
   </header>
 
   <main>
-    <section class="hero" aria-labelledby="hero-title">
+    <section class="hero" aria-labelledby="hero-title" data-hero>
       <div class="wrap hero__inner">
-        <h1 id="hero-title" class="display hero__title" data-reveal>Open UK graduate roles, watched daily.</h1>
+        <h1 id="hero-title" class="hero__name" data-reveal>GradMarket.</h1>
+        <p class="hero__tagline" data-reveal style="--i: 1">Open UK graduate roles, watched daily.</p>
+        <p class="hero__sub" data-reveal style="--i: 2">
+          {{ "{:,}".format(boards_monitored) }} company job boards, checked every morning
+          {%- if stats.collecting_since %} since {{ stats.collecting_since.strftime("%B") }}{% endif %}.
+          Every posting kept — including the ones that closed, which is how you can tell what's actually new.
+        </p>
         <dl class="stats">
-          <div class="stat" data-reveal style="--i: 1">
+          <div class="stat" data-reveal style="--i: 3">
             <dt class="micro">Boards monitored</dt>
             <dd class="stat__value">{{ "{:,}".format(boards_monitored) }}</dd>
           </div>
-          <div class="stat" data-reveal style="--i: 2">
+          <div class="stat" data-reveal style="--i: 4">
             <dt class="micro">Postings collected</dt>
             <dd class="stat__value">{{ "{:,}".format(stats.postings_collected) }}</dd>
           </div>
-          <div class="stat" data-reveal style="--i: 3">
+          <div class="stat" data-reveal style="--i: 5">
             <dt class="micro">Roles open now</dt>
             <dd class="stat__value">{{ "{:,}".format(roles | length) }}</dd>
           </div>
-          <div class="stat" data-reveal style="--i: 4">
-            <dt class="micro">Collecting since{% if stats.collecting_since %} · {{ stats.collecting_since.year }}{% endif %}</dt>
+          <div class="stat stat--date" data-reveal style="--i: 6">
+            <dt class="micro">Collecting since</dt>
             <dd class="stat__value">
               {%- if stats.collecting_since -%}
-                <time datetime="{{ stats.collecting_since.date().isoformat() }}">{{ stats.collecting_since | day_month }}</time>
+                <time datetime="{{ stats.collecting_since.date().isoformat() }}">{{ stats.collecting_since | full_date }}</time>
               {%- else -%}—{%- endif -%}
             </dd>
           </div>
         </dl>
+
+        {% if arrivals.days %}
+        <figure class="arrivals" data-reveal style="--i: 7">
+          <div class="arrivals__head micro">
+            <span>UK early-careers postings first seen, per day</span>
+            {% if arrivals.peak %}<span>Peak {{ arrivals.peak.count }} · {{ arrivals.peak.day | day_month }}</span>{% endif %}
+          </div>
+          <div class="arrivals__plot" data-arrivals>
+            <div class="arrivals__bars" aria-hidden="true">
+              {%- for d in arrivals.days -%}
+              <span class="bar{% if d.is_recent %} bar--recent{% endif %}"
+                    style="--h: {{ '%.1f' | format(d.height_pct) }}%"
+                    data-label="{{ d.day | full_date }}" data-count="{{ d.count }}"></span>
+              {%- endfor -%}
+            </div>
+            <span class="arrivals__tip" data-arrivals-tip hidden></span>
+          </div>
+          <div class="arrivals__months micro" aria-hidden="true">
+            {%- for m in arrivals.months -%}<span style="flex-grow: {{ m.days }}">{{ m.initial }}</span>{%- endfor -%}
+          </div>
+          <figcaption class="micro arrivals__note">Roles already live when their board was first observed aren't counted — only genuine arrivals.</figcaption>
+          <table class="visually-hidden">
+            <caption>UK early-careers postings first seen per day</caption>
+            <thead><tr><th scope="col">Date</th><th scope="col">Postings first seen</th></tr></thead>
+            <tbody>
+              {%- for d in arrivals.days %}
+              <tr><td>{{ d.day | full_date }}</td><td>{{ d.count }}</td></tr>
+              {%- endfor %}
+            </tbody>
+          </table>
+        </figure>
+        {% endif %}
       </div>
     </section>
 
@@ -77,6 +117,15 @@
           <div class="field field--grow">
             <label class="micro" for="f-q">Search</label>
             <input id="f-q" name="q" type="search" placeholder="Title, company or location" autocomplete="off">
+          </div>
+          <div class="field">
+            <label class="micro" for="f-city">City</label>
+            <span class="select">
+            <select id="f-city" name="city">
+              <option value="">All cities</option>
+              {% for city, n in city_counts %}<option value="{{ city }}">{{ city }} ({{ n }})</option>{% endfor %}
+            </select>
+            </span>
           </div>
           <div class="field">
             <label class="micro" for="f-company">Company</label>
@@ -105,22 +154,37 @@
       </form>
 
       <div class="wrap">
+        <p class="micro sort-note" data-sort-note hidden>
+          <span>Sorted list</span>
+          <button type="button" data-regroup>Back to freshness groups</button>
+        </p>
         <table class="roles">
-          <caption class="visually-hidden">Open UK early-careers roles. Ages ending in + are minimums: the role was already live when its board was first observed.</caption>
+          <caption class="visually-hidden">Open UK early-careers roles, grouped by when they were first seen. Ages ending in + are minimums: the role was already live when its board was first observed.</caption>
           <thead>
             <tr class="micro">
               <th scope="col" class="col-role"><button type="button" data-sort="title">Role</button></th>
               <th scope="col" class="col-location">Location</th>
-              <th scope="col" class="col-num" aria-sort="descending"><button type="button" data-sort="first-seen">First seen</button></th>
+              <th scope="col" class="col-num"><button type="button" data-sort="first-seen">First seen</button></th>
               <th scope="col" class="col-num"><button type="button" data-sort="open">Open</button></th>
             </tr>
           </thead>
-          <tbody data-rows>
-            {% for role in roles %}
+          {% for group in groups %}
+          <tbody class="group" data-group="{{ group.key }}">
+            <tr class="group__head">
+              <th colspan="4" scope="colgroup" class="micro">
+                <span class="group__name">{{ group.heading }}</span>
+                <span class="group__span">{{ group.span }}</span>
+                <span class="group__count" data-group-count>{{ group.roles | length }} {{ "role" if group.roles | length == 1 else "roles" }}</span>
+              </th>
+            </tr>
+            {% for role in group.roles %}
             <tr class="role{% if role.is_long_running %} role--long{% endif %}"
+                data-group="{{ group.key }}"
+                data-order="{{ loop.index }}"
                 data-title="{{ (role.title or '') | lower }}"
                 data-company="{{ role.company }}"
                 data-location="{{ (role.location or '') | lower }}"
+                data-cities="{{ role.cities | join('|') }}"
                 data-source="{{ role.source }}"
                 data-new="{{ 'true' if role.is_new else 'false' }}"
                 data-first-seen="{{ role.first_seen_at.isoformat() }}">
@@ -154,6 +218,8 @@
             </tr>
             {% endfor %}
           </tbody>
+          {% endfor %}
+          <tbody data-flat hidden></tbody>
         </table>
         <p class="empty" data-empty hidden>No roles match these filters.</p>
       </div>

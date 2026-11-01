@@ -12,9 +12,25 @@ from web_seed import (
     seed,
 )
 
-from gradmarket.web.queries import PUBLIC_COLUMNS, derive_role, fetch_roles, fetch_stats
+from gradmarket.web.queries import (
+    PUBLIC_COLUMNS,
+    derive_role,
+    fetch_arrival_counts,
+    fetch_roles,
+    fetch_stats,
+    freshness_group,
+)
 
-DERIVED_FIELDS = {"days_since_first_seen", "days_open", "is_new", "is_long_running", "age_is_floor", "age_label"}
+DERIVED_FIELDS = {
+    "days_since_first_seen",
+    "days_open",
+    "is_new",
+    "is_long_running",
+    "age_is_floor",
+    "age_label",
+    "freshness_group",
+    "cities",
+}
 
 def _row(*, first_seen_at: datetime, board_started_at: datetime = COLLECTION_START) -> dict:
     return {
@@ -177,3 +193,98 @@ def test_collecting_since_ignores_pruned_raw_fetches(pg_conn):
     insert_posting(pg_conn, external_id="oct", first_seen_at=NOW - timedelta(days=10))
 
     assert fetch_stats(pg_conn).collecting_since == COLLECTION_START
+
+
+# --- freshness groups ---
+
+
+def test_freshness_group_boundaries():
+    assert [freshness_group(d, is_floor=False) for d in (0, 7, 8, 30, 31, 200)] == [
+        "this_week",
+        "this_week",
+        "this_month",
+        "this_month",
+        "earlier",
+        "earlier",
+    ]
+
+
+def test_a_floor_is_never_this_week():
+    assert [freshness_group(d, is_floor=True) for d in (0, 3, 7, 8, 30, 31, 83)] == [
+        "this_month",
+        "this_month",
+        "this_month",
+        "this_month",
+        "this_month",
+        "earlier",
+        "earlier",
+    ]
+
+
+def test_derive_role_sets_group_and_cities():
+    role = derive_role(_row(first_seen_at=NOW - timedelta(days=10)), now=NOW)
+
+    assert role.freshness_group == "this_month"
+    assert role.cities == ("London",)
+
+
+def test_floored_role_with_3_day_floor_is_this_month_not_this_week():
+    started = NOW - timedelta(days=3)
+    role = derive_role(_row(first_seen_at=started, board_started_at=started), now=NOW)
+
+    assert role.age_is_floor
+    assert role.freshness_group == "this_month"
+    assert role.age_label == "3+ days" and not role.is_new
+
+
+def test_unfloored_role_of_the_same_age_is_this_week():
+    role = derive_role(_row(first_seen_at=NOW - timedelta(days=3)), now=NOW)
+
+    assert not role.age_is_floor
+    assert role.freshness_group == "this_week"
+
+
+def test_arrival_counts_by_utc_day_include_closed_exclude_non_uk_and_non_early(pg_conn):
+    # Observed since collection start, so nothing below is a floor.
+    insert_raw_fetch(pg_conn, source="greenhouse", company="acme", fetched_at=COLLECTION_START)
+    day = NOW - timedelta(days=5)
+    insert_posting(pg_conn, external_id="a", first_seen_at=day)
+    insert_posting(pg_conn, external_id="b", first_seen_at=day + timedelta(hours=1), is_open=False)
+    insert_posting(pg_conn, external_id="c", first_seen_at=day, location_class="non_uk")
+    insert_posting(pg_conn, external_id="d", first_seen_at=day, seniority_class="experienced")
+    insert_posting(pg_conn, external_id="e", first_seen_at=NOW - timedelta(days=1))
+
+    counts = fetch_arrival_counts(pg_conn)
+
+    assert counts == {day.date(): 2, (NOW - timedelta(days=1)).date(): 1}
+
+
+def test_board_added_last_week_counts_nothing_on_its_first_day_then_counts_arrivals(pg_conn):
+    """Everything on a new board's first observed day was already live —
+    not an arrival. Postings that appear from the next day on are."""
+    first_day = NOW - timedelta(days=6)
+    insert_raw_fetch(pg_conn, source="lever", company="newco", fetched_at=first_day)
+    for i in range(5):
+        insert_posting(pg_conn, external_id=f"live_{i}", source="lever", company="newco", first_seen_at=first_day)
+    next_day = first_day + timedelta(days=1)
+    insert_posting(pg_conn, external_id="arrived_1", source="lever", company="newco", first_seen_at=next_day)
+    insert_posting(pg_conn, external_id="arrived_2", source="lever", company="newco",
+                   first_seen_at=NOW - timedelta(days=2))
+
+    counts = fetch_arrival_counts(pg_conn)
+
+    assert first_day.date() not in counts
+    assert counts[next_day.date()] == 1
+    assert counts[(NOW - timedelta(days=2)).date()] == 1
+
+
+def test_board_with_no_surviving_fetch_row_floors_its_first_postings(pg_conn):
+    # raw_fetches pruned: the board's start comes from its earliest posting.
+    insert_posting(pg_conn, external_id="old", source="ashby", company="oldco", first_seen_at=COLLECTION_START)
+    insert_posting(pg_conn, external_id="new", source="ashby", company="oldco", first_seen_at=NOW - timedelta(days=1))
+
+    counts = fetch_arrival_counts(pg_conn)
+
+    assert COLLECTION_START.date() not in counts
+    assert counts[(NOW - timedelta(days=1)).date()] == 1
+
