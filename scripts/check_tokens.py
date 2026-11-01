@@ -7,11 +7,23 @@ see. Run directly:
 
     python scripts/check_tokens.py [candidates_file] [--source {greenhouse,lever,ashby,workable,workday}]
 
+Every probed token lands in exactly one of three sections, recorded per
+token as the results file's `status` column:
+  - working: HTTP 200 with at least one job. The only section that goes
+    into the paste-ready companies.yaml block.
+  - empty: HTTP 200 with zero jobs. The board exists but isn't advertising
+    anything — possibly disused, or a company that hires through a
+    different ATS. Listed, never pasted: this is how 40 empty boards once
+    ended up configured without anyone noticing.
+  - failed: anything else — a non-200 (429s get their own "rate limited,
+    not tested" sub-list, see below), a connection error, or a 200 whose
+    payload couldn't be parsed.
+
 For --source workable specifically: a nonsense token 404s, so a 200 response
 — even with zero jobs — confirms a real, resolved account, same as the other
-three sources. What's still separated out is a small "likely shell" bucket:
-a zero-job account is only excluded from the paste block when BOTH its name
-is token-identical (case-insensitive) AND its description is empty — see
+three sources. Within the empty section, a zero-job account is additionally
+flagged as a "likely shell" when BOTH its name is token-identical
+(case-insensitive) AND its description is empty — see
 workable_likely_shell() and CLAUDE.md's data model section. Workable account
 slugs still aren't namespaced to real company identity (the slug-collision
 finding, e.g. "notion" resolving to an unrelated agency, is unrelated to and
@@ -73,7 +85,15 @@ DEFAULT_CANDIDATES_FILE = Path(__file__).resolve().parent / "candidates.txt"
 DEFAULT_WORKDAY_CANDIDATES_FILE = Path(__file__).resolve().parent / "candidates_workday.txt"
 DEFAULT_SLEEP = 1.0
 SAMPLE_SIZE = 3
-RESULTS_FIELDS = ["token", "status_code", "label", "job_count", "name", "description_present", "tenant", "dc", "site"]
+RESULTS_FIELDS = ["token", "status_code", "status", "label", "job_count", "name", "description_present", "tenant", "dc", "site"]
+
+STATUS_WORKING = "working"
+STATUS_EMPTY = "empty"
+STATUS_FAILED = "failed"
+
+EMPTY_NOTE = """\
+# HTTP 200 with zero jobs: the board exists but isn't advertising anything —
+# possibly a disused board, or a company that hires through a different ATS."""
 
 WORKABLE_SHELL_NOTE = """\
 # A nonsense Workable token 404s — it doesn't 200 with zero jobs — so a 200
@@ -134,11 +154,32 @@ def workday_sample(payload: list[dict]) -> list[str]:
     return [f"{job.get('title') or '?'} — {job.get('locationsText') or '?'}" for job in payload[:SAMPLE_SIZE]]
 
 
+def result_status(result) -> str:
+    """working / empty / failed — see module docstring. A 200 whose payload
+    couldn't be parsed is failed, not empty: we never saw a job list."""
+    if result.status_code == 200 and result.payload is not None:
+        return STATUS_WORKING if result.job_count > 0 else STATUS_EMPTY
+    return STATUS_FAILED
+
+
+def recorded_status(row: dict) -> str:
+    """result_status() for a results-file row, so files written before the
+    `status` column existed can still be read back by section."""
+    if row.get("status"):
+        return row["status"]
+    if row.get("status_code") == "200" and row.get("job_count"):
+        return STATUS_WORKING if int(row["job_count"]) > 0 else STATUS_EMPTY
+    return STATUS_FAILED
+
+
 def load_results(path: Path) -> dict[str, dict]:
     if not path.is_file():
         return {}
     with path.open(newline="", encoding="utf-8") as f:
-        return {row["token"]: row for row in csv.DictReader(f)}
+        rows = {row["token"]: row for row in csv.DictReader(f)}
+    for row in rows.values():
+        row["status"] = recorded_status(row)
+    return rows
 
 
 def save_results(path: Path, results: dict[str, dict]) -> None:
@@ -245,7 +286,7 @@ def main() -> None:
 
     fetch = SOURCES[args.source].fetch
     working: list[tuple[Any, int]] = []
-    shell: list[tuple[Any, int]] = []  # only split out separately for workable
+    empty: list[tuple[Any, bool]] = []  # (candidate, likely shell — only ever True for workable)
     rate_limited: list[tuple[Any, str]] = []
     failed: list[tuple[Any, str]] = []
 
@@ -257,28 +298,29 @@ def main() -> None:
         key = str(candidate)
         result = fetch(candidate)
         label = status_label(result)
+        status = result_status(result)
         name = None
         description_present = None
+        audit = ""
 
-        if result.payload is not None:
-            if args.source == "workable":
-                name = result.payload.get("name")
-                description_present = bool((result.payload.get("description") or "").strip())
-                audit = f"  name={name!r}  desc={'present' if description_present else 'empty'}"
-            else:
-                audit = ""
+        if result.payload is not None and args.source == "workable":
+            name = result.payload.get("name")
+            description_present = bool((result.payload.get("description") or "").strip())
+            audit = f"  name={name!r}  desc={'present' if description_present else 'empty'}"
 
-            if args.source == "workable" and result.job_count == 0 and workable_likely_shell(
+        if status == STATUS_WORKING:
+            working.append((candidate, result.job_count))
+            print(f"{key}  {result.status_code}  {result.job_count} jobs{audit}")
+            if is_workday:
+                for line in workday_sample(result.payload):
+                    print(f"    - {line}")
+        elif status == STATUS_EMPTY:
+            is_shell = args.source == "workable" and workable_likely_shell(
                 key, name, result.payload.get("description")
-            ):
-                shell.append((candidate, result.job_count))
-                print(f"{key}  {result.status_code}  {result.job_count} jobs{audit}  [LIKELY SHELL — see note below]")
-            else:
-                working.append((candidate, result.job_count))
-                print(f"{key}  {result.status_code}  {result.job_count} jobs{audit}")
-                if is_workday:
-                    for line in workday_sample(result.payload):
-                        print(f"    - {line}")
+            )
+            empty.append((candidate, is_shell))
+            shell_tag = "  [LIKELY SHELL — see note below]" if is_shell else ""
+            print(f"{key}  {result.status_code}  0 jobs{audit}  [EMPTY]{shell_tag}")
         elif result.status_code == 429:
             rate_limited.append((candidate, label))
             print(f"{key}  {label}")
@@ -289,6 +331,7 @@ def main() -> None:
         existing_results[key] = {
             "token": key,
             "status_code": str(result.status_code) if result.status_code is not None else "",
+            "status": status,
             "label": label,
             "job_count": str(result.job_count) if result.payload is not None else "",
             "name": name if name is not None else "",
@@ -304,8 +347,26 @@ def main() -> None:
             time.sleep(args.sleep)
 
     save_results(results_file, existing_results)
+    print_report(
+        source=args.source,
+        working=working,
+        empty=empty,
+        rate_limited=rate_limited,
+        failed=failed,
+        results_file=results_file,
+    )
 
-    if is_workday:
+
+def print_report(
+    *,
+    source: str,
+    working: list[tuple[Any, int]],
+    empty: list[tuple[Any, bool]],
+    rate_limited: list[tuple[Any, str]],
+    failed: list[tuple[Any, str]],
+    results_file: Path,
+) -> None:
+    if source == "workday":
         print("\n# Working boards (workday) — paste-ready")
         block = {
             "workday": [
@@ -314,14 +375,16 @@ def main() -> None:
         }
         print(yaml.dump(block, default_flow_style=False, sort_keys=False))
     else:
-        print(f"\n# Working tokens ({args.source}) — paste into companies.yaml")
+        print(f"\n# Working tokens ({source}) — paste into companies.yaml")
         print(yaml.dump([token for token, _ in working], default_flow_style=False, sort_keys=False))
 
-    if args.source == "workable" and shell:
-        print(f"# Likely-shell tokens ({len(shell)}) — NOT included above")
-        print(WORKABLE_SHELL_NOTE)
-        for token, count in shell:
-            print(f"  {token}: {count} jobs")
+    if empty:
+        print(f"# Empty boards ({len(empty)}) — NOT included above")
+        print(EMPTY_NOTE)
+        for candidate, is_shell in empty:
+            print(f"  {candidate}: 200, 0 jobs{'  [LIKELY SHELL]' if is_shell else ''}")
+        if any(is_shell for _, is_shell in empty):
+            print(WORKABLE_SHELL_NOTE)
         print()
 
     if rate_limited:
@@ -335,8 +398,10 @@ def main() -> None:
     for token, label in failed:
         print(f"{token}: {label}")
 
-    print(f"\n# Results recorded to {results_file}")
-
+    failed_count = len(failed) + len(rate_limited)
+    rate_limited_note = f" ({len(rate_limited)} rate limited, not tested)" if rate_limited else ""
+    print(f"\n# Summary: {len(working)} working, {len(empty)} empty, {failed_count} failed{rate_limited_note}")
+    print(f"# Results recorded to {results_file}")
 
 if __name__ == "__main__":
     main()

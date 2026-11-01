@@ -94,13 +94,15 @@ Postings are observed over time, not stored once:
   as the other three sources — a nonsense token 404s, it doesn't 200 with
   zero jobs. (Earlier note here claimed the opposite — that zero jobs meant
   a wrong/squatted account — which was wrong and has been corrected.)
-  `scripts/check_tokens.py`'s `--source workable` handling still separates
-  out a small "likely shell" bucket from zero-job accounts, but only when
-  BOTH the account name is token-identical (case-insensitive) AND the
-  account description is empty — e.g. `buffer`/`intercom`/`zapier`/`gitlab`
-  currently fail this way. A zero-job account with a distinct name or a
-  real description is treated as working, same as any other source's empty
-  board.
+  "Real account" is not the same as "worth configuring", though:
+  `scripts/check_tokens.py` reports every source's 200-with-zero-jobs
+  boards in their own "empty" section, never in the paste-ready
+  companies.yaml block (only boards with at least one job go there) —
+  that's how 40 empty boards once ended up configured unnoticed. For
+  `--source workable`, an empty account is additionally flagged "likely
+  shell" when BOTH the account name is token-identical (case-insensitive)
+  AND the account description is empty — e.g.
+  `buffer`/`intercom`/`zapier`/`gitlab` currently fail this way.
 - Workable enforces a daily request quota, not a short rate-limit window —
   observed a 429 with `Retry-After: 82392` (~22.9h). `scripts/check_tokens.py`
   runs against the same quota as the daily collection ingest; a discovery run
