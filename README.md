@@ -178,16 +178,26 @@ bespoke systems and are unreachable — including most of the FTSE 100. The
 candidate list also over-sampled quantitative trading firms early on, so they
 are over-represented relative to reality.
 
-**Early-careers recall is 81%**, so roughly one in five graduate roles is
-missed. A production bug illustrated why that figure is optimistic: a rule
-matching `CPT/OPT` visa status also matched the ordinary word "opt", so any
-description containing *"opt out of marketing communications"* boilerplate was
-classified early-careers. It misclassified an entire company's board and
-inflated the reported count by 19%. The 50-posting holdout missed it completely,
-because no employer in that sample used the phrase.
+**Held-out evaluation missed three systematic errors that production caught
+immediately.** Classification was validated on 250 hand-labelled postings with
+a 50-posting holdout labelled after the rules were written. Reported precision
+was 1.00 for UK location and 1.00 for early-careers, at 0.81 recall. In
+production, three distinct failures appeared that neither set contained:
 
-A held-out set validates against the distribution it was drawn from. Systematic
-errors concentrated in one employer's template are invisible to it.
+- A `Specialist` keyword that preempted early-careers markers.
+- A `CPT/OPT` visa rule that matched the ordinary word "opt", so any
+  description containing *"opt out of marketing communications"* boilerplate
+  was classified early-careers. It misclassified an entire company's board and
+  inflated the reported count by 19%.
+- A UK city rule that matched Cambridge, Massachusetts. A full-corpus review
+  after fixing it reclassified 58 of 5,791 postings — roughly 1% — including
+  two roles visible on the public page.
+
+Each was found by looking at live output, not by evaluation. A held-out set
+validates against the distribution it was drawn from; errors concentrated in
+one employer's template or one ambiguous place name are invisible to it at
+n=50. The practical conclusion is that for a system like this, monitoring the
+output beats enlarging the test set.
 
 **Posting durations are biased short.** Age is measured from first observation,
 not true posting date, so anything already live at collection start has unknown

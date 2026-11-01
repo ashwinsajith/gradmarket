@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from gradmarket.web.queries import Stats
-from gradmarket.web.store import Snapshot, SnapshotCache
+from gradmarket.web.store import Snapshot, SnapshotCache, count_configured_boards
 
 
 class FakeClock:
@@ -23,7 +23,7 @@ class CountingLoader:
         self.calls += 1
         if self.fail:
             raise RuntimeError("db down")
-        return Snapshot(roles=[], stats=Stats(postings_collected=self.calls, collecting_since=None), boards_tracked=1)
+        return Snapshot(roles=[], stats=Stats(postings_collected=self.calls, collecting_since=None), boards_monitored=1)
 
 
 def _cache() -> tuple[SnapshotCache, CountingLoader, FakeClock]:
@@ -79,3 +79,15 @@ def test_first_load_failure_raises():
     with pytest.raises(RuntimeError):
         cache.get()
     assert cache.age() is None
+
+
+def test_boards_monitored_counts_every_configured_board(tmp_path, monkeypatch):
+    """Empty boards included — see count_configured_boards()."""
+    path = tmp_path / "companies.yaml"
+    path.write_text(
+        "greenhouse:\n  - acme\n  - emptyco\n"
+        "workday:\n  - {company: bigco, tenant: bigco, dc: wd3, site: Careers}\n"
+    )
+    monkeypatch.setenv("COMPANIES_FILE", str(path))
+
+    assert count_configured_boards() == 3

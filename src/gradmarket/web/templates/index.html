@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GradMarket — open UK graduate roles</title>
+  <meta name="description" content="Open UK graduate and internship roles from {{ boards_monitored }} company job boards, checked daily, with how long each has been open.">
+  <meta name="color-scheme" content="dark light">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400..500&family=Inter+Tight:wght@500..600&display=swap">
+  <link rel="stylesheet" href="{{ url_for('static', path='site.css') }}">
+  <script>document.documentElement.classList.add("js");</script>
+  <script src="{{ url_for('static', path='site.js') }}" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#roles">Skip to roles</a>
+
+  <header class="nav">
+    <div class="wrap nav__inner">
+      <a class="nav__brand" href="/">GradMarket</a>
+      <nav aria-label="Primary">
+        <ul class="nav__links micro">
+          <li><a href="#roles">Roles</a></li>
+          <li><a href="#limits">Limits</a></li>
+          <li><a href="{{ repo_url }}">GitHub<span class="visually-hidden"> repository</span></a></li>
+        </ul>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero" aria-labelledby="hero-title">
+      <div class="wrap hero__inner">
+        <h1 id="hero-title" class="display hero__title" data-reveal>Open UK graduate roles, watched daily.</h1>
+        <dl class="stats">
+          <div class="stat" data-reveal style="--i: 1">
+            <dt class="micro">Boards monitored</dt>
+            <dd class="stat__value">{{ "{:,}".format(boards_monitored) }}</dd>
+          </div>
+          <div class="stat" data-reveal style="--i: 2">
+            <dt class="micro">Postings collected</dt>
+            <dd class="stat__value">{{ "{:,}".format(stats.postings_collected) }}</dd>
+          </div>
+          <div class="stat" data-reveal style="--i: 3">
+            <dt class="micro">Roles open now</dt>
+            <dd class="stat__value">{{ "{:,}".format(roles | length) }}</dd>
+          </div>
+          <div class="stat" data-reveal style="--i: 4">
+            <dt class="micro">Collecting since{% if stats.collecting_since %} · {{ stats.collecting_since.year }}{% endif %}</dt>
+            <dd class="stat__value">
+              {%- if stats.collecting_since -%}
+                <time datetime="{{ stats.collecting_since.date().isoformat() }}">{{ stats.collecting_since | day_month }}</time>
+              {%- else -%}—{%- endif -%}
+            </dd>
+          </div>
+        </dl>
+      </div>
+    </section>
+
+    <section id="roles" class="list" aria-labelledby="roles-title">
+      <div class="wrap">
+        <header class="section-head">
+          <p class="micro" data-reveal>01 — Open now</p>
+          <h2 id="roles-title" class="display section-head__title" data-reveal style="--i: 1">Every role, and how long it's been up.</h2>
+          {% if last_checked %}
+          <p class="micro" data-reveal style="--i: 2">Boards last checked <time datetime="{{ last_checked.isoformat() }}">{{ last_checked | full_date }}, {{ last_checked.strftime("%H:%M") }} UTC</time></p>
+          {% endif %}
+        </header>
+      </div>
+
+      <form class="filters" role="search" aria-label="Filter roles" data-filters>
+        <div class="wrap filters__inner">
+          <div class="field field--grow">
+            <label class="micro" for="f-q">Search</label>
+            <input id="f-q" name="q" type="search" placeholder="Title, company or location" autocomplete="off">
+          </div>
+          <div class="field">
+            <label class="micro" for="f-company">Company</label>
+            <span class="select">
+            <select id="f-company" name="company">
+              <option value="">All companies</option>
+              {% for company in companies %}<option value="{{ company }}">{{ company }}</option>{% endfor %}
+            </select>
+            </span>
+          </div>
+          <div class="field">
+            <label class="micro" for="f-source">Source</label>
+            <span class="select">
+            <select id="f-source" name="source">
+              <option value="">All sources</option>
+              {% for source in sources %}<option value="{{ source }}">{{ source | title }}</option>{% endfor %}
+            </select>
+            </span>
+          </div>
+          <div class="field field--toggle">
+            <input id="f-new" name="new" type="checkbox">
+            <label class="micro" for="f-new">New this week</label>
+          </div>
+          <p class="micro filters__count" aria-live="polite" data-count>{{ roles | length }} roles</p>
+        </div>
+      </form>
+
+      <div class="wrap">
+        <table class="roles">
+          <caption class="visually-hidden">Open UK early-careers roles. Ages ending in + are minimums: the role was already live when its board was first observed.</caption>
+          <thead>
+            <tr class="micro">
+              <th scope="col" class="col-role"><button type="button" data-sort="title">Role</button></th>
+              <th scope="col" class="col-location">Location</th>
+              <th scope="col" class="col-num" aria-sort="descending"><button type="button" data-sort="first-seen">First seen</button></th>
+              <th scope="col" class="col-num"><button type="button" data-sort="open">Open</button></th>
+            </tr>
+          </thead>
+          <tbody data-rows>
+            {% for role in roles %}
+            <tr class="role{% if role.is_long_running %} role--long{% endif %}"
+                data-title="{{ (role.title or '') | lower }}"
+                data-company="{{ role.company }}"
+                data-location="{{ (role.location or '') | lower }}"
+                data-source="{{ role.source }}"
+                data-new="{{ 'true' if role.is_new else 'false' }}"
+                data-first-seen="{{ role.first_seen_at.isoformat() }}">
+              <td class="col-role">
+                {% if role.url %}
+                <a class="role__title" href="{{ role.url }}" rel="noopener">{{ role.title or "Untitled role" }}<span class="visually-hidden">, {{ role.company }}, on the employer's site</span></a>
+                {% else %}
+                <span class="role__title">{{ role.title or "Untitled role" }}</span>
+                {% endif %}
+                <span class="micro role__meta">
+                  <span>{{ role.company }}</span>
+                  {% if role.is_new %}<span class="tag tag--new"><span class="dot" aria-hidden="true"></span>New</span>{% endif %}
+                  {% if role.is_long_running %}<span class="tag">Long-running</span>{% endif %}
+                </span>
+              </td>
+              <td class="col-location" data-label="Location"><span class="role__location">{{ role.location or "—" }}</span></td>
+              <td class="col-num" data-label="First seen"><time datetime="{{ role.first_seen_at.isoformat() }}">{{ role.first_seen_at | full_date }}</time></td>
+              <td class="col-num" data-label="Open">
+                {%- if role.age_is_floor -%}
+                <span title="Already live when this board was first observed — real age unknown">{{ role.age_label }}<span class="visually-hidden"> at least</span></span>
+                {%- else -%}
+                {{ role.age_label }}
+                {%- endif -%}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        <p class="empty" data-empty hidden>No roles match these filters.</p>
+      </div>
+    </section>
+  </main>
+
+  <footer id="limits" class="footer" aria-labelledby="limits-title">
+    <div class="wrap">
+      <header class="section-head">
+        <p class="micro" data-reveal>02 — Limits</p>
+        <h2 id="limits-title" class="display section-head__title" data-reveal style="--i: 1">What this can't see.</h2>
+      </header>
+      <dl class="limits">
+        <div>
+          <dt class="micro">Sampling frame</dt>
+          <dd>Five applicant tracking systems: Greenhouse, Lever, Ashby, Workable and Workday. Most of the FTSE 100 hire through other systems, so most of the FTSE 100 isn't here.</dd>
+        </div>
+        <div>
+          <dt class="micro">Recall</dt>
+          <dd>Early-careers detection finds about 81% of graduate roles on a 50-posting held-out sample, so some real roles are missed. It errs towards leaving a role out rather than showing one that isn't early-careers.</dd>
+        </div>
+        <div>
+          <dt class="micro">Ages</dt>
+          <dd>Ages are counted from the day a role was first observed. Anything already live when its board was first observed is shown as a minimum, with a “+” — its real age is unknown, only that it's at least that old.</dd>
+        </div>
+        <div>
+          <dt class="micro">Content</dt>
+          <dd>Job descriptions belong to the employers and aren't republished here. Every link goes to the employer's own posting.</dd>
+        </div>
+      </dl>
+      <p class="footer__base micro">
+        <a href="{{ repo_url }}">Source on GitHub<span class="visually-hidden">: the GradMarket repository</span></a>
+        <span>Snapshot refreshed every 5 minutes · boards checked daily</span>
+      </p>
+    </div>
+  </footer>
+</body>
+</html>

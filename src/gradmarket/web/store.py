@@ -41,7 +41,7 @@ CONNECT_TIMEOUT_SECONDS = 5
 class Snapshot:
     roles: list[Role]
     stats: Stats
-    boards_tracked: int
+    boards_monitored: int
 
 
 def _configure(conn: psycopg.Connection) -> None:
@@ -66,18 +66,22 @@ def make_pool(conninfo: str) -> ConnectionPool:
 
 
 def count_configured_boards() -> int:
-    """'Boards tracked' means configured in companies.yaml today — not every
+    """'Boards monitored' means configured in companies.yaml today — not every
     (source, company) ever observed, which would still count boards since
-    removed (e.g. Leonardo)."""
+    removed (e.g. Leonardo).
+
+    Deliberately includes boards that have never produced a posting (~40
+    return 200 with an empty feed): they're polled daily because an empty
+    board filling up is how a hiring season opening gets detected. Don't
+    filter them out, and don't add a "boards with postings" stat beside it."""
     return sum(len(tokens) for tokens in load_companies(resolve_companies_file()).values())
 
 
-def load_snapshot(conn: psycopg.Connection, *, boards_tracked: int) -> Snapshot:
-    now = datetime.now(UTC)
+def load_snapshot(conn: psycopg.Connection, *, boards_monitored: int, now: datetime | None = None) -> Snapshot:
     return Snapshot(
-        roles=fetch_roles(conn, now=now),
+        roles=fetch_roles(conn, now=now or datetime.now(UTC)),
         stats=fetch_stats(conn),
-        boards_tracked=boards_tracked,
+        boards_monitored=boards_monitored,
     )
 
 
@@ -140,10 +144,10 @@ class SnapshotCache:
 
 
 def pooled_loader(pool: ConnectionPool) -> Callable[[], Snapshot]:
-    boards_tracked = count_configured_boards()
+    boards_monitored = count_configured_boards()
 
     def load() -> Snapshot:
         with pool.connection() as conn:
-            return load_snapshot(conn, boards_tracked=boards_tracked)
+            return load_snapshot(conn, boards_monitored=boards_monitored)
 
     return load

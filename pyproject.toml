@@ -24,6 +24,11 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+# The web service's template and static assets ship inside the package —
+# without this, `pip install .` (the Dockerfile) leaves them out.
+[tool.setuptools.package-data]
+"gradmarket.web" = ["templates/*.html", "static/*.css", "static/*.js"]
+
 [project.scripts]
 gradmarket-ingest = "gradmarket.ingest:main"
 gradmarket-parse = "gradmarket.parse_run:main"

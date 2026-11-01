@@ -13,11 +13,18 @@ configured on 10 August). A global "earliest fetch" would present a board
 added last week as a set of brand-new postings, every one flagged "new".
 
 A board's start is the earliest of min(raw_fetches.fetched_at) and
-min(postings.first_seen_at) for it. Neither alone is enough: raw_fetches is
-pruned after RAW_FETCHES_RETENTION_DAYS (so its min drifts forward to ~30
-days ago for every board), and postings only knows a board from its first
-*non-empty* fetch. When both are pruned/late the error is conservative —
-a genuinely new posting reads as a floor ("N+ days"), never the reverse.
+min(postings.first_seen_at) for it, the latter over ALL its postings,
+closed ones included — open rows alone would give a board whose early
+postings have all closed a late start, wrongly flooring ages we know
+exactly. Neither term alone is enough: raw_fetches is pruned after
+RAW_FETCHES_RETENTION_DAYS (so its min drifts forward to ~30 days ago for
+every board), and postings only knows a board from its first *non-empty*
+fetch — without the raw_fetches term, an empty board filling up (a hiring
+season opening, the reason empty boards are monitored at all) would
+present its first postings as floors instead of as new. Either term can
+only move a start earlier, never later. When both are pruned/late the
+error is conservative — a genuinely new posting reads as a floor
+("N+ days"), never the reverse.
 """
 
 from __future__ import annotations
@@ -71,6 +78,9 @@ WHERE p.location_class = 'uk'
 ORDER BY p.first_seen_at DESC, p.id DESC
 """
 
+# collecting_since is min(first_seen_at) over ALL postings, never
+# min(raw_fetches.fetched_at): raw_fetches is pruned at 30 days, so its
+# earliest row is about a month old, not the day collection started.
 STATS_SQL = """
 SELECT count(*) AS postings_collected, min(first_seen_at) AS collecting_since
 FROM postings
