@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from datetime import timedelta
 
@@ -136,6 +137,19 @@ def test_page_shows_short_location_with_full_list_in_title_and_accessible_text()
     assert f'title="{full}"' in html
     assert f'<span class="visually-hidden">{full}</span>' in html
     assert api_location == MULTI_LOCATION  # display-only: the API keeps the raw value
+
+
+def test_page_has_no_absolute_http_asset_urls():
+    """Regression: url_for() rendered http://testserver/static/... — behind
+    Railway's https proxy that's mixed content, and the page went unstyled.
+    TestClient serves plain http, exactly the scheme the app wrongly saw in
+    production, so a url_for() reintroduced anywhere fails here."""
+    with _client(_fake_snapshot) as client:
+        html = client.get("/").text
+
+    assert re.findall(r'(?:src|href)="http://[^"]*"', html) == []
+    assert 'href="/static/site.css"' in html
+    assert 'src="/static/site.js"' in html
 
 
 def test_static_assets_are_served():

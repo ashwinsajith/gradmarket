@@ -9,9 +9,12 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400..500&family=Inter+Tight:wght@500..600&display=swap">
-  <link rel="stylesheet" href="{{ url_for('static', path='site.css') }}">
+  {#- Root-relative, never url_for(): behind Railway's TLS-terminating proxy
+      url_for builds absolute http:// URLs, which an https page blocks as
+      mixed content. A root-relative path inherits the page's scheme. #}
+  <link rel="stylesheet" href="/static/site.css">
   <script>document.documentElement.classList.add("js");</script>
-  <script src="{{ url_for('static', path='site.js') }}" defer></script>
+  <script src="/static/site.js" defer></script>
 </head>
 <body>
   <a class="skip-link" href="#roles">Skip to roles</a>

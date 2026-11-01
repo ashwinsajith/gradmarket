@@ -28,7 +28,15 @@ COLLECTOR_MODULES = {
 def test_server_reads_port_from_env_and_pins_one_worker_no_reload():
     options = server_options({"PORT": "4321"})
 
-    assert options == {"host": "0.0.0.0", "port": 4321, "workers": 1, "reload": False, "log_level": "info"}
+    assert options == {
+        "host": "0.0.0.0",
+        "port": 4321,
+        "workers": 1,
+        "reload": False,
+        "proxy_headers": True,
+        "forwarded_allow_ips": "*",
+        "log_level": "info",
+    }
 
 
 def test_server_default_port_without_env():

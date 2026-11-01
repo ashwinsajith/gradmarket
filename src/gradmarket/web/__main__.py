@@ -8,7 +8,12 @@ not drift:
 
 - one worker: the snapshot cache (store.SnapshotCache) is per-process, so
   N workers would mean N caches and N sets of Postgres queries;
-- no reload, no debug: FastAPI's docs routes are already off in app.py.
+- no reload, no debug: FastAPI's docs routes are already off in app.py;
+- proxy headers trusted from any address: Railway terminates TLS at its
+  edge and forwards plain HTTP, so without X-Forwarded-Proto the app sees
+  every request as http. "*" is safe here only because the container is
+  reachable solely through Railway's proxy — there is no direct path for a
+  client to spoof the header.
 
 For local development, `uvicorn gradmarket.web.app:app --reload` is still
 the convenient form.
@@ -31,6 +36,8 @@ def server_options(env: Mapping[str, str]) -> dict[str, Any]:
         "port": int(env.get("PORT", DEFAULT_PORT)),
         "workers": 1,
         "reload": False,
+        "proxy_headers": True,
+        "forwarded_allow_ips": "*",
         "log_level": "info",
     }
 
