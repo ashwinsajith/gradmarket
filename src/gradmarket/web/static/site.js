@@ -80,7 +80,30 @@
 
   function plural(n) { return n === 1 ? "1 role" : n + " roles"; }
 
+  // Height of whatever is stuck to the top of the viewport above the list:
+  // the nav always, the filter bar only where it's sticky (not on phones).
+  var nav = document.querySelector(".nav");
+  var table = list.querySelector("table.roles");
+  function stickyTop() {
+    var h = nav ? nav.offsetHeight : 0;
+    if (window.getComputedStyle(form).position === "sticky") h += form.offsetHeight;
+    return h;
+  }
+
+  // Filtering 257 rows down to 12 can shrink the page below the current
+  // scroll position; the browser then clamps the scroll to the new bottom
+  // and drops the reader into the footer. When the old position no longer
+  // fits, put the results table just under the sticky bars instead —
+  // instantly, no animation. When the page is still tall enough, do nothing.
+  function keepListInView(scrollBefore) {
+    var maxScroll = document.documentElement.scrollHeight - window.innerHeight;
+    if (scrollBefore <= maxScroll) return;
+    var target = table.getBoundingClientRect().top + window.scrollY - stickyTop();
+    window.scrollTo(0, Math.max(0, target));
+  }
+
   function applyFilters() {
+    var scrollBefore = window.scrollY;
     var q = form.elements.q.value.trim().toLowerCase();
     var city = form.elements.city.value;
     var company = form.elements.company.value;
@@ -110,6 +133,7 @@
 
     count.textContent = plural(shown);
     empty.hidden = shown !== 0;
+    keepListInView(scrollBefore);
   }
 
   form.addEventListener("input", applyFilters);
