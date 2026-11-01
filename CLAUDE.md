@@ -11,11 +11,14 @@ Deferred work (things noticed but not built) lives in [IDEAS.md](IDEAS.md).
 - Parser:     `python -m gradmarket.parse_run`
 - Classifier: `python -m gradmarket.classify_run`
 - Pipeline:   `python -m gradmarket.pipeline` (ingest, parse, classify, in order; owns the healthcheck ping for all three — use this in production, not the commands chained)
+- Web:        `python -m gradmarket.web` (production entrypoint: reads `$PORT`, one worker) or `uvicorn gradmarket.web.app:app --reload` locally. Read-only; never runs the collector.
 - Tests:      `pytest`
 - Lint:       `ruff check .`
 
 ## Architecture
-Railway: Postgres + a cron service. Local dev connects via DATABASE_PUBLIC_URL; deployed services use the private
+Railway: Postgres + a cron service (the collector) + a web service (the
+public page, `gradmarket.web`), both from the same Dockerfile — see the README's
+Deployment section. Local dev connects via DATABASE_PUBLIC_URL; deployed services use the private
 DATABASE_URL. Code reads one env var name, value differs per environment.
 
 ## Data model — read before touching the schema

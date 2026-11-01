@@ -1,0 +1,19 @@
+# Railway builds from a git checkout, so nothing below is ever in its build
+# context. This file makes a local `docker build .` match it: everything
+# here is untracked. Above all .env — a local build must never bake the
+# database URL into an image.
+.env
+.envrc
+.venv/
+build/
+dist/
+*.egg-info/
+**/__pycache__/
+.pytest_cache/
+.ruff_cache/
+.claude/
+.git/
+.DS_Store
+scripts/check_tokens_results_*.csv
+data/
+!data/eval/labels.csv

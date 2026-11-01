@@ -159,12 +159,62 @@ python -m gradmarket.classify_run  # classify only  (--full to re-tag)
 pytest
 ```
 
-Deployed on Railway: Postgres plus a daily cron, built from the Dockerfile.
 Monitoring is a dead-man's switch — the pipeline pings an external service on
 success, and silence is the alert. A platform can't tell you a scheduled job
 stopped firing; only the absence of a ping can.
 
 Configuration is `companies.yaml`. Secrets are environment variables.
+
+### The public page
+
+```bash
+uvicorn gradmarket.web.app:app --reload   # http://127.0.0.1:8000
+```
+
+Reads `DATABASE_URL` from `.env` like everything else, opens every transaction
+read-only, and queries Postgres at most once per 5 minutes (an in-memory
+snapshot cache). Routes: `/` (server-rendered page), `/api/roles` (the same
+rows as JSON), `/healthz`.
+
+---
+
+## Deployment
+
+Railway: one Postgres database and two services, both built from this repo's
+`Dockerfile`.
+
+| | Collector (cron) | Web |
+|---|---|---|
+| Runs | `python -m gradmarket.pipeline` (the Dockerfile's `CMD`), daily on a cron schedule | `python -m gradmarket.web`, always on |
+| Writes to Postgres | yes | never — read-only transactions |
+| `DATABASE_URL` | Railway's **private** URL | Railway's **private** URL |
+| `HEALTHCHECK_URL` | dead-man's-switch ping URL | not used |
+| `COMPANIES_FILE` | optional; defaults to `companies.yaml` in the working directory (`/app` in the image) | same — the "boards monitored" stat reads it |
+| `PORT` | not used | set by Railway |
+| Healthcheck | the outbound ping above | Railway healthcheck on `/healthz` |
+
+`DATABASE_PUBLIC_URL` (Railway's TCP proxy) is only for running things from a
+laptop; deployed services use the private network.
+
+**Why the web service starts with `python -m gradmarket.web` and not a
+`uvicorn` command:** Railway runs a Dockerfile service's custom start command
+without a shell, so `--port $PORT` would pass the literal text `$PORT`.
+`gradmarket/web/__main__.py` reads `PORT` itself and pins one worker (the
+snapshot cache is per-process — more workers means more caches and more
+queries) and no reload.
+
+To run the image exactly as the web service runs it, from a laptop (so with
+the public URL from `.env`):
+
+```bash
+docker build -t gradmarket .
+docker run --rm -p 8000:8000 -e PORT=8000 \
+  -e DATABASE_URL="$(sed -n 's/^DATABASE_URL=//p' .env)" \
+  gradmarket python -m gradmarket.web
+```
+
+`.dockerignore` keeps a local build's context the same as Railway's (which
+builds from git): above all, `.env` never ends up inside an image.
 
 ---
 
