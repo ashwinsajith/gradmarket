@@ -29,6 +29,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from gradmarket.web.display import display_location
 from gradmarket.web.store import Snapshot, SnapshotCache, make_pool, pooled_loader
 
 log = logging.getLogger(__name__)
@@ -48,6 +49,7 @@ def _full_date(d: datetime) -> str:
 templates = Jinja2Templates(directory=WEB_DIR / "templates")
 templates.env.filters["day_month"] = _day_month
 templates.env.filters["full_date"] = _full_date
+templates.env.filters["location_display"] = display_location
 
 
 def create_app(cache: SnapshotCache | None = None) -> FastAPI:

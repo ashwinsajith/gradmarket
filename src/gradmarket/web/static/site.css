@@ -455,6 +455,14 @@ td.col-location {
   color: var(--muted);
 }
 
+/* Micro size, so it reads as an annotation on the location beside it. */
+.role__more {
+  color: var(--muted);
+  font-size: 0.6875rem;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+}
+
 .role__title {
   font-weight: 450;
 }

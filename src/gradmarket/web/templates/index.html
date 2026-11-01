@@ -133,7 +133,13 @@
                   {% if role.is_long_running %}<span class="tag">Long-running</span>{% endif %}
                 </span>
               </td>
-              <td class="col-location" data-label="Location"><span class="role__location">{{ role.location or "—" }}</span></td>
+              {% set loc = role.location | location_display %}
+              <td class="col-location" data-label="Location">
+                <span class="role__location" title="{{ loc.full }}">
+                  <span aria-hidden="true">{{ loc.short }}{% if loc.more %} <span class="role__more">+{{ loc.more }} more</span>{% endif %}</span>
+                  <span class="visually-hidden">{{ loc.full }}</span>
+                </span>
+              </td>
               <td class="col-num" data-label="First seen"><time datetime="{{ role.first_seen_at.isoformat() }}">{{ role.first_seen_at | full_date }}</time></td>
               <td class="col-num" data-label="Open">
                 {%- if role.age_is_floor -%}

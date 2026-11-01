@@ -14,12 +14,12 @@ from gradmarket.web.store import Snapshot, SnapshotCache, load_snapshot
 DERIVED_FIELDS = {"days_since_first_seen", "days_open", "is_new", "is_long_running", "age_is_floor", "age_label"}
 
 
-def _role(external_id: str, *, first_seen_at) -> Role:
+def _role(external_id: str, *, first_seen_at, location: str = "London") -> Role:
     return derive_role(
         {
             "title": f"Role {external_id}",
             "company": "acme",
-            "location": "London",
+            "location": location,
             "location_class": "uk",
             "source": "greenhouse",
             "first_seen_at": first_seen_at,
@@ -116,6 +116,26 @@ def test_page_renders_floor_as_n_plus_days_never_exact():
     assert "83+ days" in html
     assert "83 days" not in html
     assert "2 days" in html
+
+
+MULTI_LOCATION = "United Kingdom, UK - Hertfordshire - Ware; UK - Angus - Montrose; UK - Hertfordshire - Stevenage"
+
+
+def test_page_shows_short_location_with_full_list_in_title_and_accessible_text():
+    snapshot = Snapshot(
+        roles=[_role("multi", first_seen_at=NOW - timedelta(days=2), location=MULTI_LOCATION)],
+        stats=Stats(postings_collected=1, collecting_since=COLLECTION_START),
+        boards_monitored=195,
+    )
+    with _client(lambda: snapshot) as client:
+        html = client.get("/").text
+        api_location = client.get("/api/roles").json()["roles"][0]["location"]
+
+    full = "Hertfordshire, Ware; Angus, Montrose; Hertfordshire, Stevenage"
+    assert ">Hertfordshire, Ware <span class=\"role__more\">+2 more</span>" in html
+    assert f'title="{full}"' in html
+    assert f'<span class="visually-hidden">{full}</span>' in html
+    assert api_location == MULTI_LOCATION  # display-only: the API keeps the raw value
 
 
 def test_static_assets_are_served():
