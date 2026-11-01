@@ -10,9 +10,10 @@
   <meta name="theme-color" content="#0b0c0f">
   {#- One mark at every size (scripts/make_icons.py). Root-relative, like
       every asset (see below). #}
-  <link rel="icon" type="image/png" sizes="16x16" href="/static/icon-16.png">
-  <link rel="icon" type="image/png" sizes="32x32" href="/static/icon-32.png">
-  <link rel="apple-touch-icon" href="/static/icon-180.png">
+  {#- ?v= so a changed icon reaches returning visitors; see ICON_VERSION. #}
+  <link rel="icon" type="image/png" sizes="16x16" href="/static/icon-16.png?v={{ icon_version }}">
+  <link rel="icon" type="image/png" sizes="32x32" href="/static/icon-32.png?v={{ icon_version }}">
+  <link rel="apple-touch-icon" href="/static/icon-180.png?v={{ icon_version }}">
   {#- Open Graph needs absolute URLs. site_url comes from the request, whose
       scheme is right behind Railway's proxy because uvicorn trusts
       X-Forwarded-Proto (gradmarket.web.__main__). These are metadata for
@@ -21,7 +22,7 @@
   <meta property="og:title" content="GradMarket — Open UK graduate roles">
   <meta property="og:description" content="{{ description }}">
   <meta property="og:url" content="{{ site_url }}/">
-  <meta property="og:image" content="{{ site_url }}/static/icon-512.png">
+  <meta property="og:image" content="{{ site_url }}/static/icon-512.png?v={{ icon_version }}">
   <meta property="og:image:width" content="512">
   <meta property="og:image:height" content="512">
   <meta property="og:image:alt" content="GradMarket's mark: a dot-matrix capital G">
@@ -44,7 +45,7 @@
           the top. aria-label names the link, so screen readers hear it once
           rather than the label plus the visible text. #}
       <a class="nav__home" href="/" aria-label="GradMarket — back to top" data-home>
-        <img class="nav__mark" src="/static/mark.svg" width="26" height="26" alt="">
+        <img class="nav__mark" src="/static/mark.svg?v={{ icon_version }}" width="26" height="26" alt="">
         <span class="nav__brand" aria-hidden="true">GradMarket</span>
       </a>
       <nav aria-label="Primary">

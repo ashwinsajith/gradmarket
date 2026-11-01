@@ -39,6 +39,15 @@ log = logging.getLogger(__name__)
 WEB_DIR = Path(__file__).resolve().parent
 REPO_URL = "https://github.com/ashwinsajith/gradmarket"
 
+# Appended as ?v= to every icon URL. Browsers cache favicons aggressively and
+# ignore ordinary reloads, so a changed icon only reaches returning visitors
+# under a new URL. Bump ICON_VERSION whenever scripts/make_icons.py output
+# changes, and set ICON_SET_SHA256 to the new hash — a test fails while the
+# files and the recorded hash disagree, so the bump can't be forgotten.
+ICON_VERSION = "2"
+ICON_FILES = ("icon-16.png", "icon-32.png", "icon-180.png", "icon-512.png", "mark.svg")
+ICON_SET_SHA256 = "d0cd638f0706d4856d16ee3a0cc6e53509f2834e30a8fc641dac0f4236585978"
+
 
 def _day_month(d: datetime) -> str:
     return f"{d.day} {d:%b}"
@@ -128,6 +137,7 @@ def create_app(cache: SnapshotCache | None = None) -> FastAPI:
                 "last_checked": max((r.last_seen_at for r in roles), default=None),
                 "repo_url": REPO_URL,
                 "site_url": str(request.base_url).rstrip("/"),
+                "icon_version": ICON_VERSION,
             },
         )
 

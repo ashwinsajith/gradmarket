@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import re
 from collections.abc import Callable
 from datetime import date, timedelta
@@ -9,7 +10,7 @@ import pytest
 from fastapi.testclient import TestClient
 from web_seed import COLLECTION_START, DESCRIPTION_SENTINEL, NOW, seed
 
-from gradmarket.web.app import create_app
+from gradmarket.web.app import ICON_FILES, ICON_SET_SHA256, ICON_VERSION, create_app
 from gradmarket.web.queries import PUBLIC_COLUMNS, Role, Stats, derive_role
 from gradmarket.web.store import Snapshot, SnapshotCache, load_snapshot, make_snapshot
 
@@ -259,7 +260,7 @@ def test_nav_logo_mark_is_always_shown_and_links_home():
 
     assert 'href="/"' in home
     assert 'aria-label="GradMarket — back to top"' in home
-    assert '<img class="nav__mark" src="/static/mark.svg" width="26" height="26" alt="">' in home
+    assert '<img class="nav__mark" src="/static/mark.svg?v=2" width="26" height="26" alt="">' in home
     # Both the mark and the wordmark are inside the one link.
     assert '<span class="nav__brand" aria-hidden="true">GradMarket</span>' in home
 
@@ -429,15 +430,15 @@ STATIC = Path(__file__).resolve().parents[2] / "src" / "gradmarket" / "web" / "s
 def test_icon_links_and_metadata():
     html = _page()
 
-    assert '<link rel="icon" type="image/png" sizes="16x16" href="/static/icon-16.png">' in html
-    assert '<link rel="icon" type="image/png" sizes="32x32" href="/static/icon-32.png">' in html
-    assert '<link rel="apple-touch-icon" href="/static/icon-180.png">' in html
+    assert '<link rel="icon" type="image/png" sizes="16x16" href="/static/icon-16.png?v=2">' in html
+    assert '<link rel="icon" type="image/png" sizes="32x32" href="/static/icon-32.png?v=2">' in html
+    assert '<link rel="apple-touch-icon" href="/static/icon-180.png?v=2">' in html
     assert '<meta name="theme-color" content="#0b0c0f">' in html
     assert "<title>GradMarket — Open UK graduate roles</title>" in html
     assert re.search(r'<meta name="description" content="[^"]*195 company job boards', html)
     for prop in ("og:title", "og:description", "og:url", "og:type", "og:image"):
         assert f'property="{prop}"' in html, prop
-    assert 'property="og:image" content="http://testserver/static/icon-512.png"' in html
+    assert 'property="og:image" content="http://testserver/static/icon-512.png?v=2"' in html
 
 
 def test_icon_files_are_served_as_png_at_their_stated_size():
@@ -498,4 +499,37 @@ def test_nav_mark_svg_is_the_dot_matrix_g():
     cells = fills[1:]
     assert len(cells) == 35
     assert (cells.count("#f2f3f5"), cells.count("#d99a2b"), cells.count("#2a2e34")) == (16, 1, 18)
+
+
+# --- icon cache-busting ---
+
+
+def test_every_icon_url_carries_the_version():
+    html = _page()
+    icon_urls = re.findall(r'(?:href|src|content)="[^"]*?/static/((?:icon-\d+\.png|mark\.svg)[^"]*)"', html)
+
+    assert len(icon_urls) == 5
+    assert all(url.endswith(f"?v={ICON_VERSION}") for url in icon_urls), icon_urls
+
+
+def test_icon_version_was_bumped_when_the_icons_changed():
+    """Fails when the icon files no longer match the hash recorded beside
+    ICON_VERSION: bump ICON_VERSION, then set ICON_SET_SHA256 to the hash
+    this test prints."""
+    digest = hashlib.sha256()
+    for name in ICON_FILES:
+        digest.update(name.encode())
+        digest.update((STATIC / name).read_bytes())
+
+    assert digest.hexdigest() == ICON_SET_SHA256, (
+        f"icons changed: bump ICON_VERSION in gradmarket/web/app.py and set ICON_SET_SHA256 = {digest.hexdigest()!r}"
+    )
+
+
+def test_versioned_icon_url_still_serves_the_file():
+    with _client(_fake_snapshot) as client:
+        resp = client.get(f"/static/icon-16.png?v={ICON_VERSION}")
+
+    assert resp.status_code == 200
+    assert resp.headers["content-type"] == "image/png"
 

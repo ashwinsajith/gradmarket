@@ -1,21 +1,28 @@
 # GradMarket
 
+**Live: [gradmarket.dev](https://gradmarket.dev)**
+
 **A daily record of UK graduate and internship postings, collected from company
 applicant tracking systems since August 2026.**
 
 Job aggregators show you what's open today. They don't tell you when a posting
 appeared, how long it's been up, or whether it ever closed. GradMarket checks
-157 company job boards every morning and keeps every observation, so those
+195 company job boards every morning and keeps every observation, so those
 questions have answers.
 
 | | |
 |---|---|
 | **Collecting since** | 10 August 2026, daily, unattended |
-| **Company boards** | 157 across 5 ATS platforms |
-| **Postings collected** | 25,019 (14,948 currently open) |
-| **UK early-careers roles tracked** | 343 (248 currently open) |
-| **Content revisions recorded** | 39,615 |
-| **Tests** | 345 |
+| **Boards monitored** | 195 across 5 ATS platforms |
+| **Postings collected** | 30,599 (15,787 currently open) |
+| **UK early-careers roles tracked** | 448 (257 currently open) |
+| **Content revisions recorded** | 53,332 |
+| **Tests** | 521 |
+
+Figures as of 1 November 2026. Boards monitored counts every board in
+`companies.yaml`, including 40 that return 200 with an empty feed and have
+never produced a posting — deliberately: an empty board filling up is how a
+hiring season opening gets detected.
 
 ---
 
@@ -76,19 +83,34 @@ job closing at once, and guessing wrong corrupts history irreversibly.
 
 ---
 
+## The site
+
+[gradmarket.dev](https://gradmarket.dev) is a FastAPI service on the same
+database: server-rendered, with every query in a read-only transaction and the
+result cached in memory for five minutes, so Postgres sees a handful of
+queries an hour however busy the page is.
+
+It shows what an aggregator can't: how long each role has been open, what
+arrived this week, and a daily arrivals chart running from the first day of
+collection. Roles already live when their board was first observed are
+excluded from the arrivals chart and labelled "N+ days" in the list — their
+real age is unknown, so they're never presented as new.
+
+---
+
 ## The five sources
 
 Each is a module behind the same `fetch(token) -> FetchResult` interface. The
 orchestrator contains no provider-specific logic; adding a source is a module
 plus a registry entry.
 
-| Source | Boards | Postings | Notes |
+| Source | Boards monitored | Postings | Notes |
 |---|---:|---:|---|
-| Greenhouse | 69 | 13,562 | Single request, full descriptions |
-| Ashby | 60 | 7,859 | Secondary locations in a separate field |
-| Workday | 25 | 2,397 | Two-stage fetch; see below |
-| Lever | 10 | 1,126 | Offset pagination, EU host fallback |
-| Workable | 8 | 75 | Daily request quota, no `id` field |
+| Greenhouse | 66 | 16,140 | Single request, full descriptions |
+| Ashby | 60 | 9,456 | Secondary locations in a separate field |
+| Workday | 18 | 3,568 | Two-stage fetch; see below |
+| Lever | 15 | 1,336 | Offset pagination, EU host fallback |
+| Workable | 36 | 99 | Daily request quota, no `id` field |
 
 **Workday is the interesting one.** Its list endpoint returns titles and
 locations but no descriptions — those need a separate request per posting. So
@@ -128,10 +150,19 @@ tool that's the right direction to fail in.
 
 ## What the data shows
 
-**Graduate hiring is concentrated, and not where students look.** Of 48
-companies with 20+ open UK roles, 28 post no early-careers positions at all.
+**Graduate hiring is concentrated, and not where students look.** Of 55
+companies with 20+ open UK roles, 31 post no early-careers positions at all.
 Among those that do, quantitative trading firms lead by proportion — Jump
-Trading at 53% of its UK roles, Squarepoint at 30%.
+Trading at 47% of its UK roles, Squarepoint at 32%. (Lloyds and Barclays rank
+higher, but their Workday boards are filtered server-side to the employer's
+own graduate categories, so the proportion says nothing there.)
+
+**The season has a measurable shape.** UK early-careers arrivals were
+near-flat through August and early September — about one a day, averaging
+0.97 from 10 August to 15 September — then climbed: 2.0 a day across
+September, 3.8 across October, with the single busiest day on 21 October at 30
+arrivals. These count genuine arrivals only; roles already live when their
+board was first observed are excluded.
 
 **The autumn season is largely invisible on startup-oriented platforms.**
 Through August and early September, new UK graduate roles arrived at 1–2 per day
@@ -174,7 +205,7 @@ uvicorn gradmarket.web.app:app --reload   # http://127.0.0.1:8000
 Reads `DATABASE_URL` from `.env` like everything else, opens every transaction
 read-only, and queries Postgres at most once per 5 minutes (an in-memory
 snapshot cache). Routes: `/` (server-rendered page), `/api/roles` (the same
-rows as JSON), `/healthz`.
+rows as JSON), `/api/arrivals` (the chart's daily counts), `/healthz`.
 
 ---
 
@@ -218,6 +249,20 @@ builds from git): above all, `.env` never ends up inside an image.
 
 ---
 
+## Collection policy
+
+- One pass per board per day, sequential, with a delay between boards (1s;
+  5s for Workable). Lever and Workday lists are paginated, and each new Workday
+  posting's detail is fetched once, also paced.
+- 429 and 5xx are retried with exponential backoff that honours `Retry-After`;
+  three consecutive 429s from one source trip a circuit breaker that skips that
+  source for the rest of the run.
+- Only the public endpoints the companies' own career pages use.
+- Job description text is stored privately for classification and never
+  republished; the public site shows links and derived fields only.
+
+---
+
 ## Limitations
 
 Stated plainly, because an analysis without them isn't worth much.
@@ -249,6 +294,11 @@ one employer's template or one ambiguous place name are invisible to it at
 n=50. The practical conclusion is that for a system like this, monitoring the
 output beats enlarging the test set.
 
+**The UK-location holdout is no longer strictly untouched.** It was consulted
+once, as a check, after the Cambridge rule was written, so for the location
+classifier it's no longer a clean held-out measure. The early-careers holdout
+is unaffected.
+
 **Posting durations are biased short.** Age is measured from first observation,
 not true posting date, so anything already live at collection start has unknown
 real age.
@@ -275,8 +325,11 @@ src/gradmarket/
   parse_run.py parsing, close-detection, retention
   detail_run.py Workday's second-stage fetches
   pipeline.py  orchestration and health reporting
+  web/         the public site: FastAPI app, read-only queries, snapshot cache
+    templates/ index.html, server-rendered
+    static/    site.css, site.js, icons
 scripts/       discovery and operational utilities
-tests/         345 tests, fixtures only, no live HTTP
+tests/         521 tests, fixtures only, no live HTTP
 docs/          classifier specification and evaluation
 ```
 
